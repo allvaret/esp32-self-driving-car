@@ -1,31 +1,36 @@
 import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+from ground import *
 
-# 1. Carregar a imagem (OpenCV carrega em BGR)
-img_bgr = cv2.imread('eu_e_meu_amor_popeys.jpg')
-img_bgr = cv2.resize(img_bgr, (640, 480))
 
-# 2. Converter para HSV (para limiarização, detecção de cor, etc.)
-img_hsv = cv2.COLOR_BGR2HSV if hasattr(cv2, 'COLOR_BGR2HSV') else None
-hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+imagem = cv2.imread('assets/simulation_Scar/Reframed_videos/screenshot_first_frame.png')
+imagem = cv2.resize(imagem, (640, 480))
 
-# 3. Processamento no espaço HSV (Exemplo: separar os 3 canais)
-h, s, v = cv2.split(hsv)
+h, w = imagem.shape[:2]
+roi_poly = np.array([
+    [0.15*w, 0.95*h],   # inferior esquerdo
+    [0.85*w, 0.95*h],   # inferior direito
+    [0.65*w, 0.75*h],   # superior direito
+    [0.35*w, 0.75*h],   # superior esquerdo
+], dtype=np.int32)
 
-# PARA EXIBIR A IMAGEM HSV COMPLETA NA TELA:
-# Você DEVE reconverter para BGR antes de passar para cv2.imshow
-img_para_exibir = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-cv2.imshow('Imagem Original (Reconvertida de HSV)', img_para_exibir)
+cv2.imshow('imagem_Pura', imagem, )
+# imagem = cv2.polylines(imagem, [roi_poly], True, 255, 2)
+# cv2.imshow('imagem_Trapezio', imagem)
 
-# PARA INSPECIONAR OS CANAIS INDIVIDUALMENTE:
-# Exiba os canais isolados como mapas de cinza (grayscale)
-cv2.imshow('Canal H (Matiz 0-179)', h)
-cv2.imshow('Canal S (Saturação 0-255)', s)
-cv2.imshow('Canal V (Brilho/Valor 0-255)', v)
-print(h)
-print()
-print(s)
-print()
-print(v)
+
+histograma = learn_floor_hist(imagem, roi_poly)
+def floor_mask(frame_bgr, hist):
+    hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+    prob = cv2.calcBackProject([hsv], [0, 1], hist, [0, 180, 0, 256], 1)
+    return prob
+
+prob_teste = floor_mask(imagem,histograma)
+
+
+plt.imshow(prob_teste)
+plt.show()
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
