@@ -3,11 +3,10 @@ import cv2, numpy as np
 def preprocess(frame_bgr, target_w = 320):
     h, w = frame_bgr.shape[:2]
     escala = target_w / w # Mantem proporcao
-    w_out = round(w * escala)
     h_out = max(1, round(h * escala))
 
     interp = cv2.INTER_AREA if escala < 1 else cv2.INTER_LINEAR
-    resize = cv2.resize(frame_bgr, [w_out,h_out], interpolation=interp)
+    resize = cv2.resize(frame_bgr, [target_w,h_out], interpolation=interp)
     blur = cv2.GaussianBlur(resize,(3,3),0)
     hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
     return hsv
