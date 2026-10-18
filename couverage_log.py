@@ -13,6 +13,7 @@ Faixas: 'inf' = ultimas linhas, largura toda; 'cen' = mesmas linhas, terco centr
 Uso:
     python coverage_log.py                       # video padrao do corredor
     python coverage_log.py outro.mp4 --thr 0.02 --out cov_outro
+    python coverage_log.py outro.mp4 --thr auto --out cov_outro_auto   # thr derivado da ROI
 """
 import argparse
 import csv
@@ -20,9 +21,9 @@ import csv
 import cv2
 import numpy as np
 
-from ground import preprocess, learn_floor_hist, floor_mask
+from ground import preprocess, learn_floor_hist, floor_mask, calibrate_thr
 
-VIDEO_DEFAULT = "assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4"
+VIDEO_DEFAULT = "assets/simulation_Scar/Reframed_videos/12sec_reframed10.mp4"
 
 STRIP_Y0 = 0.75            # faixa = ultimos 25% das linhas
 CEN_X0, CEN_X1 = 1 / 3, 2 / 3
@@ -60,22 +61,46 @@ def coverage_row(mask, prob, hsv, idx, t):
     return row
 
 
-def log_floor_coverage(video_path, csv_path, thr=0.02):
+WARMUP = 10   # frames 1..WARMUP usados para calibrar o thr (frame 0 so aprende o hist)
+
+
+def log_floor_coverage(video_path, csv_path, thr=0.02, pct=5.0):
+    """thr: float fixo, ou "auto" (percentil `pct` da ROI nos frames de aquecimento)."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"Nao abriu: {video_path}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    hist, idx = None, 0
+    buf = []                                   # frame 0 + aquecimento
+    while len(buf) < WARMUP + 1:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        buf.append(frame)
+    if not buf:
+        raise RuntimeError("Video vazio.")
+
+    hist = learn_floor_hist(buf[0])
+    if thr == "auto":
+        thr, p = calibrate_thr(buf[1:], hist, pct) if len(buf) > 1 else (0.02, 0.0)
+        print(f"thr auto = {thr:.2f} (percentil {pct:g} da ROI = {p:.1f})")
+    else:
+        thr = float(thr)
+        print(f"thr fixo = {thr}")
+
+    def frames():
+        yield from buf
+        while True:
+            ok, f = cap.read()
+            if not ok:
+                return
+            yield f
+
+    idx = 0
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDS)
         writer.writeheader()
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            if idx == 0:
-                hist = learn_floor_hist(frame)
+        for frame in frames():
             mask = floor_mask(frame, hist, thr)
             prob, hsv = floor_prob(frame, hist)
             writer.writerow(coverage_row(mask, prob, hsv, idx, idx / fps))
@@ -116,10 +141,12 @@ def plot_coverage(csv_path, png_path):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("video", nargs="?", default=VIDEO_DEFAULT)
-    ap.add_argument("--thr", type=float, default=0.02)
+    ap.add_argument("--thr", default="auto", help='numero fixo ou "auto"')
+    ap.add_argument("--pct", type=float, default=5.0, help="percentil da ROI p/ --thr auto")
     ap.add_argument("--out", default="coverage")
     a = ap.parse_args()
 
-    n = log_floor_coverage(a.video, f"{a.out}.csv", a.thr)
+    thr = "auto" if a.thr == "auto" else float(a.thr)
+    n = log_floor_coverage(a.video, f"{a.out}.csv", thr, a.pct)
     plot_coverage(f"{a.out}.csv", f"{a.out}.png")
     print(f"{n} frames -> {a.out}.csv, {a.out}.png")
