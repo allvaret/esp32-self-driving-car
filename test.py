@@ -8,10 +8,10 @@ imagem = cv2.imread('assets/simulation_Scar/Reframed_videos/screenshot_first_fra
 
 h, w = imagem.shape[:2]
 roi_poly = np.array([
-    [int(0.15 * w), int(0.95 * h)],   # inferior esquerdo
-    [int(0.85 * w), int(0.95 * h)],   # inferior direito
-    [int(0.65 * w), int(0.75 * h)],   # superior direito
-    [int(0.35 * w), int(0.75 * h)],   # superior esquerdo
+    [int(0.05 * w), int(0.95 * h)],   # inferior esquerdo
+    [int(0.95 * w), int(0.95 * h)],   # inferior direito
+    [int(0.75 * w), int(0.65 * h)],   # superior direito
+    [int(0.25 * w), int(0.65 * h)],   # superior esquerdo
 ], dtype=np.int32)
 
 
