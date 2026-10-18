@@ -12,7 +12,7 @@ def preprocess(frame_bgr, target_w = 320):
     return hsv
 
 
-def get_roi(img, x0=0.15, x1=0.85, x2=0.65, x3=0.35, y0=0.95, y1=0.95, y2=0.75, y3=0.75):
+def get_roi(img, x0=0.05, x1=0.95, x2=0.75, x3=0.25, y0=0.95, y1=0.95, y2=0.65, y3=0.65):
     h, w = img.shape[:2]
     roi_poly = np.array([
         [int(x0 * w), int(y0 * h)],   # inferior esquerdo
@@ -34,6 +34,21 @@ def learn_floor_hist(frame_bgr):
     hist = cv2.calcHist([hsv], [0, 1], mask, [30, 32], [0, 180, 0, 256]) # Range min e max de cada canal
     cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX) # Normaliza o histograma entre 0 e 255, com base nas cores mais e menos dominantes
     return hist
+
+
+def calibrate_thr(warmup_frames_bgr, hist, pct=5.0, thr_min=0.02):
+    """Retorna (thr, p): p = percentil `pct` da retroprojecao dentro da ROI."""
+    vals = []
+    for f in warmup_frames_bgr:
+        hsv = preprocess(f)
+        prob = cv2.calcBackProject([hsv], [0, 1], hist, [0, 180, 0, 256], 1)
+        prob = cv2.medianBlur(prob, 3)               # mesmo pre-threshold do floor_mask
+        roi = np.zeros(hsv.shape[:2], np.uint8)
+        cv2.fillPoly(roi, [get_roi(hsv)], 255)
+        vals.append(prob[roi > 0])
+    p = float(np.percentile(np.concatenate(vals), pct))
+    # floor_mask usa THRESH_BINARY (v > thr): thr = p - 0.5 mantem os pixels de valor p
+    return max(p - 0.5, thr_min), p
 
 
 def floor_mask(frame_bgr, hist, thr):
