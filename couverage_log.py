@@ -33,7 +33,10 @@ V_LOW, V_HIGH = 40, 235    # V fora disso => "desconhecido" (escuro / estourado)
 FIELDS = ["frame_idx", "t",
           "floor_bin_inf", "floor_bin_cen",
           "prob_mean_inf", "prob_mean_cen",
-          "unknown_inf", "unknown_cen"]
+          "unknown_inf", "unknown_cen",
+          "floor_bin_left", "floor_bin_right",
+          "prob_mean_left", "prob_mean_right",
+          "unknown_left", "unknown_right"]
 
 
 def floor_prob(frame_bgr, hist):
@@ -47,8 +50,10 @@ def floor_prob(frame_bgr, hist):
 def strip_slices(h, w):
     y0 = int(STRIP_Y0 * h)
     inf = (slice(y0, h), slice(0, w))
-    cen = (slice(y0, h), slice(int(CEN_X0 * w), int(CEN_X1 * w)))
-    return {"inf": inf, "cen": cen}
+    cen = (slice(y0, h), slice(int(CEN_X0 * w), int(CEN_X1 * w))) # Terco central
+    left = (slice(y0, h), slice(0, int(CEN_X0 * w)))      # terco esquerdo
+    right = (slice(y0, h), slice(int(CEN_X1 * w), w))     # terco direito
+    return {"inf": inf, "cen": cen, "left": left, "right": right}
 
 
 def coverage_row(mask, prob, hsv, idx, t):
