@@ -10,8 +10,8 @@ import csv
 
 import numpy as np
 
-import decision as D
-from decision import DecisionMaker, State
+from vision import decision as D
+from vision.decision import DecisionMaker, State
 
 COLORS = {State.LIVRE: "#2ca02c", State.INCERTO: "#ffbf00", State.OBSTACULO: "#d62728"}
 

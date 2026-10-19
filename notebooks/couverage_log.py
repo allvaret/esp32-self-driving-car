@@ -1,7 +1,7 @@
-"""coverage_log.py - diagnostico ADITIVO: cobertura de chao por frame.
+"""coverage_log.py - diagnostico: cobertura de chao por frame.
 
 Nao altera ground.py nem o loop interativo. Roda o video inteiro sem janelas,
-aprende o histograma no 1o frame (igual ao seu loop) e registra, para duas
+aprende o histograma no 1o frame e registra, para duas
 faixas da parte inferior do frame, tres sinais:
 
   floor_bin_*  : fracao de pixels de chao na mascara binaria (floor_mask atual)
@@ -21,7 +21,7 @@ import csv
 import cv2
 import numpy as np
 
-from ground import preprocess, learn_floor_hist, floor_mask, calibrate_thr
+from vision.ground import preprocess, learn_floor_hist, floor_mask, calibrate_thr
 
 VIDEO_DEFAULT = "assets/simulation_Scar/Reframed_videos/12sec_reframed10.mp4"
 
