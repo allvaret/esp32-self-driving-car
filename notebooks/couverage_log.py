@@ -21,9 +21,13 @@ import csv
 import cv2
 import numpy as np
 
+from pathlib import Path
+
 from vision.ground import preprocess, learn_floor_hist, floor_mask, calibrate_thr
 
-VIDEO_DEFAULT = "assets/simulation_Scar/Reframed_videos/12sec_reframed10.mp4"
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+VIDEO_DEFAULT = str(PROJECT_ROOT / "assets/simulation_Scar/Reframed_videos/12sec_reframed10.mp4")
 
 STRIP_Y0 = 0.75            # faixa = ultimos 25% das linhas
 CEN_X0, CEN_X1 = 1 / 3, 2 / 3

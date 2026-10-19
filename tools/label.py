@@ -2,7 +2,7 @@ import cv2 as cv
 import pandas as pd
 from pathlib import Path
 
-input_path = 'D:\\Projetos\\Programacao\\Python\\IA\\Esp32_Self_driver_car\\assets\\simulation_Scar\\Reframed_videos\\24sec_reframed10.mp4'
+input_path = '/assets/simulation_Scar/Reframed_videos/24sec_reframed10.mp4'
 path_obj = Path(input_path)
 output_name = f"label_{path_obj.stem}.csv"
 

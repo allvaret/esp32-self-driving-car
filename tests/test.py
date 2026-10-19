@@ -1,10 +1,8 @@
-import cv2
 import matplotlib.pyplot as plt
-import numpy as np
-from ground import *
+from vision.ground import *
 
 
-imagem = cv2.imread('assets/simulation_Scar/Reframed_videos/screenshot_first_frame.png')
+imagem = cv2.imread('../assets/simulation_Scar/Reframed_videos/screenshot_first_frame.png')
 
 h, w = imagem.shape[:2]
 roi_poly = np.array([

@@ -1,8 +1,6 @@
-import cv2
-import numpy as np
-from ground import *
+from vision.ground import *
 
-cap = cv2.VideoCapture("assets/simulation_Scar/Reframed_videos/12sec_reframed10.mp4")
+cap = cv2.VideoCapture("../assets/simulation_Scar/Reframed_videos/12sec_reframed10.mp4")
 
 contador = 0
 histograma = None

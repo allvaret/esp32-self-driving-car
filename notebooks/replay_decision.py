@@ -1,8 +1,8 @@
 """replay_decision.py - reproduz decision.py sobre um coverage_corredor_auto.csv (sem video).
 
 Uso:
-    python replay_decision.py coverage_sofa.csv
-    python replay_decision.py coverage_corredor.csv --out dec_corredor
+    python -m notebooks.replay_decision coverage_sofa.csv
+    python -m notebooks.replay_decision assets/simulation_Scar/Reframed_videos/docs/logs/flow_parede.csv --out dec_parede
 Gera <out>.csv (estado por frame), <out>.png e imprime as transicoes.
 """
 import argparse
