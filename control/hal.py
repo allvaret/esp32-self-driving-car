@@ -1,4 +1,4 @@
-"""hal.py - camada de abstracao de hardware: sensor de distancia + servo, enlace com o ESP32.
+"""hal.py - camada de abstracao de control: sensor de distancia + servo, enlace com o ESP32.
 
 A logica (controller.py) so conhece estas interfaces. Hoje usamos MOCKS; quando o
 sensor/firmware existirem, troca-se a implementacao sem tocar no controller.
@@ -125,7 +125,7 @@ class MemoryLink:
 
 class SerialLink:
     """USB serial (JSON por linha). port: 'COM3', '/dev/ttyUSB0' ou 'loop://' (teste).
-    NAO testado em hardware real; testado apenas em loopback."""
+    NAO testado em control real; testado apenas em loopback."""
 
     def __init__(self, port, baud=115200):
         import serial                                   # pip install pyserial

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from vision.decision import State as VState
-from hardware.hal import Drive
+from control.hal import Drive
 
 # ------------------------------------------------------------------ parametros ---
 D_STOP = 0.50           # m: sensor central mais perto que isso -> AVOID
