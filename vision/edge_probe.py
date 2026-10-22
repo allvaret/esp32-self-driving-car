@@ -21,6 +21,7 @@ Uso:
     python edge_probe.py videoParede.mp4 --out edge_parede --mark 6.4 \
         --seg chao:0.0:2.8 --seg parede2:9.2:13.4 --snap 5.0 --snap 12.0
 --mark: linha vertical no grafico. --seg nome:t0:t1: media das colunas no intervalo.
+--canny LO,HI: limiares fixos do Canny (baixe para bordas de baixo contraste).
 --snap T: salva <out>_snap_T.png (bordas em vermelho, altura por faixa em verde)
           do frame mais proximo de T s, para voce conferir contra o rodape real.
 """
@@ -38,6 +39,7 @@ CANNY_SIGMA = 0.33
 HORIZ_RATIO = 4.0                # ~ +-14 graus da horizontal
 MIN_LEN = 20                     # extensao horizontal minima (px @320)
 MIN_FRAC = 0.5                   # fracao das colunas da faixa que precisa ter borda
+CANNY_FIXED = None               # (lo, hi) fixos; None = automatico (--canny LO,HI)
 
 FEATS = ["h_left", "h_cen", "h_right", "cov", "dens", "str_cen"]
 
@@ -50,6 +52,8 @@ def resize_w(frame_bgr):
 
 
 def auto_canny(gray, sigma=CANNY_SIGMA):
+    if CANNY_FIXED is not None:
+        return cv2.Canny(gray, CANNY_FIXED[0], CANNY_FIXED[1])
     m = float(np.median(gray))
     lo = int(max(0, (1 - sigma) * m))
     hi = int(min(255, (1 + sigma) * m))
@@ -188,7 +192,10 @@ if __name__ == "__main__":
     ap.add_argument("--mark", type=float, action="append", default=[])
     ap.add_argument("--seg", action="append", default=[], help="nome:t0:t1")
     ap.add_argument("--snap", type=float, action="append", default=[], help="tempo (s) p/ salvar PNG")
+    ap.add_argument("--canny", default=None, help="LO,HI fixos (ex.: 15,40); padrao = automatico")
     a = ap.parse_args()
+    if a.canny:
+        CANNY_FIXED = tuple(int(v) for v in a.canny.split(","))
 
     rows = run(a.video, a.out, a.snap)
     with open(f"{a.out}.csv", "w", newline="") as f:
