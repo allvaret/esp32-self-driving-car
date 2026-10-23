@@ -1,4 +1,4 @@
-"""replay_main.py - esqueleto do main em tempo real, alimentado por VIDEO + sensor MOCK.
+"""notebooks/replay_main.py - esqueleto do main em tempo real, alimentado por VIDEO + sensor MOCK.
 
 Por frame:  frame -> ground (mascara/prob) -> decision.py (estado da visao)
                   -> edge_probe (borda proxima?)  -> controller (fusao + FSM)
@@ -8,10 +8,10 @@ ATENCAO: o replay e de MALHA ABERTA. O video nao reage aos comandos (a re/curva 
 muda o que a camera ve) e o cenario do sensor e indexado pelo tempo. Serve para
 validar a logica e o timing das decisoes, nao o comportamento em malha fechada.
 
-Uso:
-    python replay_main.py videoParede.mp4 --scenario scenario_parede_exemplo.csv --out run_parede
-    python replay_main.py videoParede.mp4 --scenario sc.csv --canny 8,24 --fault none:16.2:18.8
-    python replay_main.py sofa.mp4 --no-edges --max-range 2.0 --noise 0.02 --dropout 0.05
+Uso (da raiz do repositorio):
+    python -m notebooks.replay_main videoParede.mp4 --scenario scenario_parede_exemplo.csv --out run_parede
+    python -m notebooks.replay_main videoParede.mp4 --scenario sc.csv --canny 8,24 --fault none:16.2:18.8
+    python -m notebooks.replay_main sofa.mp4 --no-edges --max-range 2.0 --noise 0.02 --dropout 0.05
 --fault modo:t0:t1 (repetivel): modo none (sem eco, ex. sol) | far (devolve alcance maximo, ex. perna fina)
 Gera <out>.csv, <out>.png e imprime as transicoes do controller.
 """
@@ -21,15 +21,16 @@ import csv
 import cv2
 import numpy as np
 
-from control.controller import Controller, Vision, D_CLEAR, D_STOP, edge_is_near
+from config import Config
+from control.controller import Controller, Vision, edge_is_near
+from control.hal import MockDriveLink, MockRangeHead, Scenario
+from vision import edge_probe
 from vision.coverage_log import WARMUP, coverage_row, floor_prob
 from vision.decision import DecisionMaker
 from vision.ground import floor_mask, learn_floor_hist, calibrate_thr
-from vision import edge_probe
-from control.hal import MockDriveLink, MockRangeHead, Scenario
 
 FIELDS = ["frame_idx", "t", "vision_state", "r", "edge_h_cen", "edge_cov", "edge_near",
-          "ctrl_state", "sub", "angle", "sensor_m", "truth_center_m", "v", "steer", "why"]
+          "ctrl_state", "sub", "angle", "sensor_m", "truth_center_m", "v", "steer", "why", "guard_level"]
 
 
 def edge_gray(frame_bgr):
@@ -37,7 +38,7 @@ def edge_gray(frame_bgr):
     return cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (3, 3), 0)
 
 
-def run(video, scenario, thr="auto", use_edges=True, mock_kw=None):
+def run(video, scenario, cfg, thr="auto", use_edges=True, mock_kw=None):
     cap = cv2.VideoCapture(video)
     if not cap.isOpened():
         raise FileNotFoundError(f"Nao abriu: {video}")
@@ -58,8 +59,8 @@ def run(video, scenario, thr="auto", use_edges=True, mock_kw=None):
     else:
         thr = float(thr)
 
-    dm, head, link = DecisionMaker(), MockRangeHead(scenario, **(mock_kw or {})), MockDriveLink()
-    ctl = Controller(head)
+    dm, head, link = DecisionMaker(cfg.decision), MockRangeHead(scenario, **(mock_kw or {})), MockDriveLink()
+    ctl = Controller(head, cfg.control)
 
     def frames():
         yield from buf
@@ -75,13 +76,13 @@ def run(video, scenario, thr="auto", use_edges=True, mock_kw=None):
         mask = floor_mask(frame, hist, thr)
         prob, hsv = floor_prob(frame, hist)
         cov = coverage_row(mask, prob, hsv, idx, t)
-        vstate = dm.update(cov["prob_mean_cen"], cov["unknown_inf"], cov["unknown_cen"])
+        vstate = dm.update(cov["prob_mean_cen"], cov["unknown_inf"], cov["unknown_cen"], t)
 
         e_h, e_cov, e_near = float("nan"), float("nan"), False
         if use_edges:
             feats, _, _ = edge_probe.edge_features(edge_gray(frame))
             e_h, e_cov = feats["h_cen"], feats["cov"]
-            e_near = edge_is_near(e_h, e_cov)
+            e_near = edge_is_near(e_h, e_cov, cfg.control)
 
         drive, info = ctl.update(t, Vision(vstate, e_near))
         link.send(t, drive)
@@ -104,7 +105,7 @@ def print_transitions(rows):
             prev = key
 
 
-def plot(rows, png_path):
+def plot(rows, png_path, ccfg):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -122,8 +123,8 @@ def plot(rows, png_path):
     axs[0].set_title("Sinais de visao", fontsize=10); axs[0].legend(fontsize=7, loc="upper left")
     axs[1].plot(t, np.minimum(f("truth_center_m"), 4), color="gray", ls="--", label="verdade (cenario, centro)")
     axs[1].plot(t, np.minimum(f("sensor_m"), 4), color="tab:purple", label="leitura do sensor (centro)")
-    axs[1].axhline(D_STOP, color="r", lw=0.8, ls=":"); axs[1].axhline(D_CLEAR, color="g", lw=0.8, ls=":")
-    axs[1].set_title("Distancia (m)  [D_STOP / D_CLEAR pontilhadas]", fontsize=10)
+    axs[1].axhline(ccfg.d_stop_m, color="r", lw=0.8, ls=":"); axs[1].axhline(ccfg.d_clear_m, color="g", lw=0.8, ls=":")
+    axs[1].set_title("Distancia (m)  [d_stop_m / d_clear_m pontilhadas]", fontsize=10)
     axs[1].legend(fontsize=7, loc="upper left")
     axs[2].plot(t, f("v"), label="v"); axs[2].plot(t, f("steer"), label="steer")
     axs[2].set_title("Comando", fontsize=10); axs[2].legend(fontsize=7, loc="upper left")
@@ -143,6 +144,7 @@ if __name__ == "__main__":
     ap.add_argument("video")
     ap.add_argument("--scenario", default=None, help="CSV t,center_m,left_m,right_m (padrao: tudo livre)")
     ap.add_argument("--out", default="run")
+    ap.add_argument("--config", default=None, help="config.json (padrao: valores DEMO)")
     ap.add_argument("--thr", default="auto")
     ap.add_argument("--no-edges", action="store_true")
     ap.add_argument("--canny", default=None, help="LO,HI fixos p/ as bordas (ex.: 8,24)")
@@ -161,13 +163,14 @@ if __name__ == "__main__":
         m, t0, t1 = s.split(":")
         faults.append((float(t0), float(t1), m))
     sc = Scenario.from_csv(a.scenario) if a.scenario else Scenario.constant()
-    rows = run(a.video, sc, a.thr, not a.no_edges,
+    cfg = Config.load(a.config)
+    rows = run(a.video, sc, cfg, a.thr, not a.no_edges,
                dict(max_range_m=a.max_range, noise_m=a.noise, dropout_p=a.dropout,
                     latency_s=a.latency, faults=faults))
     with open(f"{a.out}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
         w.writeheader()
         w.writerows(rows)
-    plot(rows, f"{a.out}.png")
+    plot(rows, f"{a.out}.png", cfg.control)
     print(f"{len(rows)} frames -> {a.out}.csv, {a.out}.png")
     print_transitions(rows)

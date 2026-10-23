@@ -1,0 +1,106 @@
+frame_idx,t,vision_state,r,edge_h_cen,edge_cov,edge_near,ctrl_state,sub,angle,sensor_m,truth_center_m,v,steer,why
+0,0.0,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.0,0.0,aguardando sensor
+1,0.1,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.0,0.0,aguardando sensor
+2,0.2,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+3,0.3,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+4,0.4,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+5,0.5,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+6,0.6,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+7,0.7,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+8,0.8,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+9,0.9,LIVRE,,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+10,1.0,LIVRE,1.2483753681127945,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+11,1.1,LIVRE,1.244450659632536,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+12,1.2,LIVRE,1.9947591340414992,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+13,1.3,LIVRE,2.1088096635206846,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+14,1.4,LIVRE,2.1254279796799906,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+15,1.5,LIVRE,2.0748857045189903,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+16,1.6,LIVRE,1.9154551619879094,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+17,1.7,LIVRE,2.204518076143366,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+18,1.8,LIVRE,1.0476065127859215,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+19,1.9,LIVRE,0.7174319574003696,nan,nan,False,CRUISE,,0,,99.0,0.5,0.0,aguardando sensor
+20,2.0,INCERTO,0.18311954914294384,nan,nan,False,SCAN,,0,,99.0,0.2,0.0,visao INCERTO
+21,2.1,OBSTACULO,0.0579840489025623,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+22,2.2,OBSTACULO,0.024586552892164656,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+23,2.3,OBSTACULO,0.007942644781892598,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+24,2.4,OBSTACULO,0.005127530175652183,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+25,2.5,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_L,-45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+26,2.6,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_L,-45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+27,2.7,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_R,45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+28,2.8,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_R,45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+29,2.9,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+30,3.0,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+31,3.1,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+32,3.2,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+33,3.3,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+34,3.4,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+35,3.5,OBSTACULO,0.0002559195096582195,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+36,3.6,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+37,3.7,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+38,3.8,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+39,3.9,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+40,4.0,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+41,4.1,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+42,4.2,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+43,4.3,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+44,4.4,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+45,4.5,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+46,4.6,OBSTACULO,0.0,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+47,4.7,OBSTACULO,0.0,nan,nan,False,SCAN,,0,,99.0,0.2,0.0,pos-desvio
+48,4.8,OBSTACULO,0.0,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+49,4.9,OBSTACULO,0.0,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+50,5.0,OBSTACULO,0.0,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+51,5.1,OBSTACULO,0.0,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+52,5.2,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_L,-45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+53,5.3,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_L,-45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+54,5.4,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_R,45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+55,5.5,OBSTACULO,0.0,nan,nan,False,AVOID,LOOK_R,45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+56,5.6,OBSTACULO,0.00019193963224366461,nan,nan,False,AVOID,REVERSE,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+57,5.7,OBSTACULO,0.0012156176708765427,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+58,5.8,OBSTACULO,0.0,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+59,5.9,OBSTACULO,0.005886148722139048,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+60,6.0,OBSTACULO,0.00236725546433853,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+61,6.1,OBSTACULO,0.00820770427403861,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+62,6.2,OBSTACULO,0.029284503890890542,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+63,6.3,OBSTACULO,0.04550066082073387,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+64,6.4,OBSTACULO,0.04970505276511889,nan,nan,False,AVOID,TURN,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+65,6.5,OBSTACULO,0.07897858867702408,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+66,6.6,OBSTACULO,0.06760296647271623,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+67,6.7,OBSTACULO,0.08905084937857259,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+68,6.8,OBSTACULO,0.17937764031244116,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+69,6.9,OBSTACULO,0.21606918601143957,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+70,7.0,OBSTACULO,0.34491369114536774,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+71,7.1,OBSTACULO,0.2914319976162925,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+72,7.2,OBSTACULO,0.18631854301367157,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+73,7.3,OBSTACULO,0.22806267103192232,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+74,7.4,OBSTACULO,0.29027670382983545,nan,nan,False,SCAN,,0,,99.0,0.2,0.0,pos-desvio
+75,7.5,OBSTACULO,0.43679427910216123,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+76,7.6,OBSTACULO,0.3707451096523699,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+77,7.7,OBSTACULO,0.34967379402501064,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+78,7.8,OBSTACULO,0.318658177450932,nan,nan,False,AVOID,STOP,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+79,7.9,OBSTACULO,0.24555111352406644,nan,nan,False,AVOID,LOOK_L,-45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+80,8.0,OBSTACULO,0.6156326604478226,nan,nan,False,AVOID,LOOK_L,-45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+81,8.1,OBSTACULO,0.5408493237326957,nan,nan,False,AVOID,LOOK_R,45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+82,8.2,OBSTACULO,0.5698303802049915,nan,nan,False,AVOID,LOOK_R,45,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+83,8.3,OBSTACULO,0.5816410655757184,nan,nan,False,AVOID,REVERSE,0,,99.0,0.0,0.0,visao OBSTACULO sem refutacao
+84,8.4,INCERTO,0.47952552522909364,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+85,8.5,INCERTO,0.3465296400492096,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+86,8.6,INCERTO,0.36620802234542915,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+87,8.7,INCERTO,0.3450672428511627,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+88,8.8,INCERTO,0.42107899321264897,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+89,8.9,INCERTO,0.48959230194114944,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+90,9.0,INCERTO,0.6018312868912542,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+91,9.1,INCERTO,0.6013943957283377,nan,nan,False,AVOID,REVERSE,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+92,9.2,LIVRE,0.7362054814302976,nan,nan,False,AVOID,TURN,0,,99.0,-0.3,0.0,visao OBSTACULO sem refutacao
+93,9.3,INCERTO,0.22706458494425522,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+94,9.4,INCERTO,0.5191491773101763,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+95,9.5,INCERTO,0.744488133560736,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+96,9.6,LIVRE,0.991313360643601,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+97,9.7,LIVRE,0.9807018409752727,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+98,9.8,LIVRE,0.8803996731542262,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+99,9.9,LIVRE,0.866631203534614,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+100,10.0,LIVRE,0.8677810133315783,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+101,10.1,LIVRE,0.8453880562364843,nan,nan,False,AVOID,TURN,0,,99.0,0.3,-1.0,visao OBSTACULO sem refutacao
+102,10.2,LIVRE,0.6959529985540548,nan,nan,False,SCAN,,0,,99.0,0.2,0.0,pos-desvio
+103,10.3,LIVRE,0.5890206874363629,nan,nan,False,SCAN,,0,,99.0,0.2,0.0,pos-desvio
+104,10.4,LIVRE,0.528325719727921,nan,nan,False,SCAN,,0,,99.0,0.2,0.0,pos-desvio
