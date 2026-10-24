@@ -1,0 +1,6 @@
+# PC (Python 3.11). Espelha as versoes que rodam no celular: numpy < 2 e OpenCV 4.x.
+# Use um venv dedicado a este projeto 
+numpy==1.26.4
+opencv-python==4.8.0.76
+matplotlib
+pyserial        # so no PC: enlace USB do plano B e testes de loopback

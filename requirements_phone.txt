@@ -1,0 +1,5 @@
+# CELULAR via Chaquopy. NAO e para `pip install` no PC.
+# Python do Chaquopy: 3.10  (o unico OpenCV android com cp310 e o 4.5.1.48).
+# Versoes conferidas nos indices do repositorio de pacotes nativos do Chaquopy (13.1+).
+numpy==1.26.2
+opencv-python-headless==4.5.1.48
