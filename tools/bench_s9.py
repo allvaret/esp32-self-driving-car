@@ -8,12 +8,14 @@ Uso (da raiz do repositorio):
     python -m tools.bench_s9 videoParede.mp4
     python -m tools.bench_s9 videoParede.mp4 --max-frames 120 --no-edges --json bench_pc.json
     python -m tools.bench_s9 videoParede.mp4 --threads 1      # limita threads do OpenCV
+    python -m tools.bench_s9 pasta_de_frames/ --fps 10        # modo imagens (jpg/png)
 No app Chaquopy:  tools.bench_s9.bench_text("/caminho/video.mp4")  -> str
 
 Veredito: compara o p95 do tempo de processamento por frame com o orcamento
 (padrao: 1000/fps do video; 100 ms para 10 fps). Se p95 > orcamento, a visao nao acompanha.
 """
 import argparse
+import glob
 import json
 import os
 import platform
@@ -25,14 +27,48 @@ import numpy as np
 
 from config import Config
 from control.controller import Controller, Vision, edge_is_near
-from hardware.hal import MockRangeHead, Scenario
+from control.hal import MockRangeHead, Scenario
 from vision import edge_probe
 from vision.coverage_log import WARMUP, coverage_row, floor_prob
 from vision.decision import DecisionMaker
-from vision.ground import floor_mask, learn_floor_hist
-from vision.thr_auto import calibrate_thr
+from vision.ground import floor_mask, learn_floor_hist, calibrate_thr
 
 STAGES = ["decode", "ground", "decision", "edges", "controller"]
+
+
+class _Source:
+    """Fonte de frames: arquivo de video (cv2.VideoCapture) OU pasta de imagens (jpg/png).
+    O modo pasta existe porque o OpenCV do Android pode vir sem decodificador de video;
+    ele tambem serve para simular o carro, que recebe imagens soltas da camera."""
+
+    def __init__(self, path, fps=None):
+        self.files, self.i, self.cap = None, 0, None
+        if os.path.isdir(path):
+            self.files = sorted(f for f in glob.glob(os.path.join(path, "*"))
+                                if f.lower().endswith((".jpg", ".jpeg", ".png")))
+            if not self.files:
+                raise FileNotFoundError(f"Pasta sem imagens: {path}")
+            self.fps, self.kind = float(fps or 10.0), "frames"
+        else:
+            self.cap = cv2.VideoCapture(path)
+            if not self.cap.isOpened():
+                raise FileNotFoundError(
+                    f"Nao abriu o video: {path}. No Android o OpenCV pode nao ter decodificador "
+                    f"de video: use uma pasta de frames (tools/video_to_frames.py).")
+            self.fps, self.kind = self.cap.get(cv2.CAP_PROP_FPS) or 30.0, "video"
+
+    def read(self):
+        if self.cap is not None:
+            return self.cap.read()
+        if self.i >= len(self.files):
+            return False, None
+        f = cv2.imread(self.files[self.i])
+        self.i += 1
+        return f is not None, f
+
+    def release(self):
+        if self.cap is not None:
+            self.cap.release()
 
 
 def _edge_gray(frame_bgr):
@@ -45,21 +81,19 @@ def _pct(values, p):
     return s[min(len(s) - 1, int(round(p / 100 * (len(s) - 1))))] if s else float("nan")
 
 
-def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, budget_ms=None):
+def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, budget_ms=None, fps=None):
     """Roda o pipeline e devolve um dicionario com plataforma, tempos por etapa e veredito."""
     if threads is not None:
         cv2.setNumThreads(int(threads))
     cfg = cfg or Config()
-    cap = cv2.VideoCapture(video)
-    if not cap.isOpened():
-        raise FileNotFoundError(f"Nao abriu: {video}")
-    fps_src = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    src = _Source(video, fps)
+    fps_src = src.fps
     budget_ms = budget_ms or 1000.0 / fps_src
 
     t0 = time.perf_counter()                       # setup: aquecimento + histograma + thr auto
     buf = []
     while len(buf) < WARMUP + 1:
-        ok, f = cap.read()
+        ok, f = src.read()
         if not ok:
             break
         buf.append(f)
@@ -79,7 +113,7 @@ def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, bu
             yield f, None
         while True:
             a = pc()
-            ok, f = cap.read()
+            ok, f = src.read()
             if not ok:
                 return
             yield f, (pc() - a) * 1000
@@ -109,7 +143,7 @@ def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, bu
             tm[k].append(v * 1000)
         n += 1
 
-    cap.release()
+    src.release()
     total = [sum(x) for x in zip(*(tm[k] for k in ("ground", "decision", "edges", "controller")))]
     stats = {k: {"mean": float(np.mean(v)), "p95": _pct(v, 95), "max": float(max(v))}
              for k, v in tm.items() if v}
@@ -117,7 +151,7 @@ def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, bu
     h, w = (buf[0].shape[:2])
     return {"python": sys.version.split()[0], "numpy": np.__version__, "cv2": cv2.__version__,
             "machine": platform.machine(), "cpus": os.cpu_count(), "cv2_threads": cv2.getNumThreads(),
-            "video": os.path.basename(video), "resolution": f"{w}x{h}", "fps_source": round(fps_src, 2),
+            "video": os.path.basename(os.path.normpath(video)), "source": src.kind, "resolution": f"{w}x{h}", "fps_source": round(fps_src, 2),
             "frames": n, "edges": use_edges, "setup_ms": setup_ms, "budget_ms": budget_ms,
             "stats": stats, "fps_compute": 1000.0 / stats["total_compute"]["mean"],
             "keeps_up": stats["total_compute"]["p95"] <= budget_ms}
@@ -126,7 +160,7 @@ def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, bu
 def format_report(r):
     L = [f"python {r['python']} | numpy {r['numpy']} | cv2 {r['cv2']} | {r['machine']} | "
          f"{r['cpus']} CPUs | cv2 threads {r['cv2_threads']}",
-         f"video {r['video']} {r['resolution']} @ {r['fps_source']} fps | {r['frames']} frames | "
+         f"{r['source']} {r['video']} {r['resolution']} @ {r['fps_source']} fps | {r['frames']} frames | "
          f"bordas {'ligadas' if r['edges'] else 'desligadas'} | setup {r['setup_ms']:.0f} ms",
          f"{'etapa':<16}{'media ms':>10}{'p95 ms':>10}{'max ms':>10}"]
     for k in STAGES + ["total_compute"]:
@@ -139,9 +173,9 @@ def format_report(r):
     return "\n".join(L)
 
 
-def bench_text(video_path, max_frames=150, use_edges=True):
+def bench_text(video_path, max_frames=150, use_edges=True, threads=None):
     """Entrada para o app Chaquopy: devolve o relatorio como texto."""
-    return format_report(run_bench(video_path, max_frames=max_frames, use_edges=use_edges))
+    return format_report(run_bench(video_path, max_frames=max_frames, use_edges=use_edges, threads=threads))
 
 
 if __name__ == "__main__":
@@ -152,9 +186,10 @@ if __name__ == "__main__":
     ap.add_argument("--threads", type=int, default=None)
     ap.add_argument("--budget-ms", type=float, default=None)
     ap.add_argument("--config", default=None)
+    ap.add_argument("--fps", type=float, default=None, help="fps assumido no modo pasta de frames (padrao 10)")
     ap.add_argument("--json", default=None, help="salva o resultado (para me enviar)")
     a = ap.parse_args()
-    res = run_bench(a.video, a.max_frames, not a.no_edges, Config.load(a.config), a.threads, a.budget_ms)
+    res = run_bench(a.video, a.max_frames, not a.no_edges, Config.load(a.config), a.threads, a.budget_ms, a.fps)
     print(format_report(res))
     if a.json:
         json.dump(res, open(a.json, "w"), indent=2)
