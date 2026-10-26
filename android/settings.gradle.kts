@@ -23,3 +23,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "CarBench"
+include(":app")
+ 
