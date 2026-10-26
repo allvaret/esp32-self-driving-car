@@ -28,10 +28,11 @@ class MainActivity : AppCompatActivity() {
         val out = findViewById<TextView>(R.id.out)
         val btnSmoke = findViewById<Button>(R.id.btnSmoke)
         val btnBench = findViewById<Button>(R.id.btnBench)
+        val btnMain = findViewById<Button>(R.id.btnMain)
         val chkEdges = findViewById<CheckBox>(R.id.chkEdges)
         val chkFrames = findViewById<CheckBox>(R.id.chkFrames)
         val edtThreads = findViewById<EditText>(R.id.edtThreads)
-        val buttons = listOf(btnSmoke, btnBench)
+        val buttons = listOf(btnSmoke, btnBench, btnMain)
 
         btnSmoke.setOnClickListener {
             runPython(out, buttons) { py ->
@@ -48,6 +49,14 @@ class MainActivity : AppCompatActivity() {
                     else copyAssetFile("bench.mp4").absolutePath
                 py.getModule("tools.android_entry")
                     .callAttr("bench", path, threads, edges, 150).toString()
+            }
+        }
+
+        btnMain.setOnClickListener {
+            val edges = chkEdges.isChecked
+            runPython(out, buttons) { py ->
+                val path = copyAssetDir("frames").absolutePath
+                py.getModule("tools.android_entry").callAttr("run_main", path, edges, 300).toString()
             }
         }
     }
