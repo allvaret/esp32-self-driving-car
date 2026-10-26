@@ -1,17 +1,7 @@
-"""main.py - loop principal: frame -> visao -> controller -> comando  (raiz do repositorio).
+"""main.py - loop principal / interface com Android (Chaquopy).
 
-O MESMO codigo roda no PC (pasta de frames ou video) e no celular (app Chaquopy).
-Hoje o sensor e o enlace sao MOCKS; troque `head` e `link` quando o hardware existir.
-
-  Runner.feed(frame_bgr, t) -> dict de telemetria (um por frame)
-      fase WARMUP : junta as primeiras WARMUP+1 frames, aprende o histograma do chao e o thr
-                    (o carro fica PARADO; premissa: so ha chao livre a frente nesse trecho)
-      fase RUN    : ground -> decision -> bordas -> controller -> link.send(comando)
-
-Uso no PC (da raiz do repositorio):
-    python main.py frames_dir/ --fps 10
-    python main.py video.mp4 --scenario scenario_parede_exemplo.csv --csv run.csv
-No app:  main.run_text("/caminho/frames", use_edges=True)  ->  str
+O MESMO codigo roda no PC (pasta de frames ou video) e no celular.
+Para execucao no celular (Samsung S9), utilize a classe StreamRunner.
 """
 import argparse
 import csv
@@ -55,7 +45,7 @@ class Runner:
 
     def __init__(self, cfg=None, head=None, link=None, use_edges=True, cv_threads=1):
         if cv_threads:
-            cv2.setNumThreads(int(cv_threads))   # no S9 o numero de threads nao fez diferenca; 1 deixa CPU livre
+            cv2.setNumThreads(int(cv_threads))   # no S9: 1 thread deixa CPU livre para os outros nucleos
         self.cfg = cfg or Config()
         self.head = head if head is not None else MockRangeHead(Scenario.constant(), noise_m=0.0)
         self.link = link if link is not None else MockDriveLink()
@@ -110,6 +100,18 @@ class Runner:
                      "proc_ms": (time.perf_counter() - t_in) * 1000})
         self._n += 1
         return info
+
+
+class StreamRunner:
+    """Wrapper para streaming de camera em tempo real no Android via Chaquopy."""
+
+    def __init__(self, use_edges=True):
+        self.runner = Runner(use_edges=use_edges, cv_threads=1)
+
+    def process_rgba_frame(self, data, width, height, row_stride=0):
+        """Converte buffer RGBA do Android CameraX para BGR e roda um passo da pipeline."""
+        frame_bgr = frame_from_rgba(data, width, height, row_stride)
+        return self.runner.feed(frame_bgr)
 
 
 # ------------------------------------------------------------ fontes de frames ---
