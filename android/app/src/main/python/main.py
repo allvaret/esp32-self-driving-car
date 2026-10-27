@@ -1,23 +1,14 @@
-"""main.py - loop principal: frame -> visao -> controller -> comando  (raiz do repositorio).
+"""main.py - loop principal / interface com Android (Chaquopy).
 
-O MESMO codigo roda no PC (pasta de frames ou video) e no celular (app Chaquopy).
-Hoje o sensor e o enlace sao MOCKS; troque `head` e `link` quando o hardware existir.
-
-  Runner.feed(frame_bgr, t) -> dict de telemetria (um por frame)
-      fase WARMUP : junta as primeiras WARMUP+1 frames, aprende o histograma do chao e o thr
-                    (o carro fica PARADO; premissa: so ha chao livre a frente nesse trecho)
-      fase RUN    : ground -> decision -> bordas -> controller -> link.send(comando)
-
-Uso no PC (da raiz do repositorio):
-    python main.py frames_dir/ --fps 10
-    python main.py video.mp4 --scenario scenario_parede_exemplo.csv --csv run.csv
-No app:  main.run_text("/caminho/frames", use_edges=True)  ->  str
+O MESMO codigo roda no PC (pasta de frames ou video) e no celular.
+Para execucao no celular (Samsung S9), utilize a classe StreamRunner.
 """
 import argparse
 import csv
 import glob
 import os
 import time
+import json
 
 import cv2
 import numpy as np
@@ -38,16 +29,29 @@ def _edge_gray(frame_bgr):
     return cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (3, 3), 0)
 
 
-def frame_from_rgba(data, width, height, row_stride=None):
-    """Bytes RGBA_8888 (ex.: ImageProxy do CameraX) -> frame BGR (height, width, 3).
-    row_stride = bytes por linha no buffer (pode ser maior que width*4 por causa de padding)."""
+_ROT = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}
+
+
+def _as_u8(data):
+    """bytes/bytearray (PC) ou byte[] Java (Chaquopy) -> np.uint8 1D."""
+    try:
+        return np.frombuffer(data, dtype=np.uint8)          # sem copia se suportar buffer protocol
+    except TypeError:
+        return np.frombuffer(bytes(data), dtype=np.uint8)   # fallback: 1 copia
+
+
+def frame_from_rgba(data, width, height, row_stride=None, rotation=0):
+    """Bytes RGBA_8888 (ImageProxy do CameraX) -> frame BGR ja rotacionado para 'em pe'.
+    row_stride: bytes por linha (pode ter padding). rotation: imageInfo.rotationDegrees."""
     stride = int(row_stride or width * 4)
-    arr = np.frombuffer(data, dtype=np.uint8)
+    arr = _as_u8(data)
     need = height * stride
-    if arr.size < need:                                   # a ultima linha pode vir sem padding
+    if arr.size < need:                                   # ultima linha pode vir sem padding
         arr = np.concatenate([arr, np.zeros(need - arr.size, np.uint8)])
     rgba = arr[:need].reshape(height, stride)[:, :width * 4].reshape(height, width, 4)
-    return cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+    bgr = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+    rot = _ROT.get(int(rotation) % 360)
+    return cv2.rotate(bgr, rot) if rot is not None else bgr
 
 
 class Runner:
@@ -55,7 +59,7 @@ class Runner:
 
     def __init__(self, cfg=None, head=None, link=None, use_edges=True, cv_threads=1):
         if cv_threads:
-            cv2.setNumThreads(int(cv_threads))   # no S9 o numero de threads nao fez diferenca; 1 deixa CPU livre
+            cv2.setNumThreads(int(cv_threads))   # no S9: 1 thread deixa CPU livre para os outros nucleos
         self.cfg = cfg or Config()
         self.head = head if head is not None else MockRangeHead(Scenario.constant(), noise_m=0.0)
         self.link = link if link is not None else MockDriveLink()
@@ -110,6 +114,74 @@ class Runner:
                      "proc_ms": (time.perf_counter() - t_in) * 1000})
         self._n += 1
         return info
+
+
+LOG_FIELDS = ["wall_s", "t", "n", "phase", "vision_state", "r", "edge_h_cen", "edge_cov",
+              "edge_near", "ctrl_state", "sub", "why", "conv_ms", "proc_ms", "w", "h", "rot"]
+
+
+def _jsonable(o):
+    if isinstance(o, np.generic):
+        return o.item()
+    if hasattr(o, "value"):          # Enum
+        return o.value
+    return str(o)
+
+
+class StreamRunner:
+    """Camera ao vivo no Android (Chaquopy). Um objeto por sessao; o Kotlin chama
+    process_rgba_frame() por frame e recebe JSON (string)."""
+
+    def __init__(self, use_edges=True, log_path=None, settle_s=1.0, config_json=None):
+        self.use_edges = bool(use_edges)
+        self.cfg = Config.load(config_json)
+        self.settle_s = float(settle_s)
+        self._log_f = self._log_w = None
+        self._rows = 0
+        if log_path:
+            self._log_f = open(str(log_path), "w", newline="")
+            self._log_w = csv.DictWriter(self._log_f, LOG_FIELDS, extrasaction="ignore", restval="")
+            self._log_w.writeheader()
+        self.recalibrate()
+
+    def recalibrate(self):
+        """Zera chao aprendido + controller. Aponte para chao LIVRE antes de chamar."""
+        self.runner = Runner(self.cfg, use_edges=self.use_edges, cv_threads=1)
+        self._t_start = time.monotonic()
+        return "ok"
+
+    def process_rgba_frame(self, data, width, height, row_stride=0, rotation=0):
+        try:
+            t0 = time.perf_counter()
+            frame = frame_from_rgba(data, width, height, row_stride, rotation)
+            conv_ms = (time.perf_counter() - t0) * 1000
+            if time.monotonic() - self._t_start < self.settle_s:   # auto-exposicao estabilizando
+                info = {"phase": "SETTLE", "vision_state": "-", "ctrl_state": "-",
+                        "why": "estabilizando exposicao", "proc_ms": 0.0}
+            else:
+                info = self.runner.feed(frame)
+            info.update({"conv_ms": conv_ms, "w": frame.shape[1], "h": frame.shape[0],
+                         "rot": int(rotation), "wall_s": round(time.monotonic() - self._t_start, 3)})
+            self._log(info)
+            return json.dumps(info, default=_jsonable)
+        except Exception as e:
+            import traceback
+            return json.dumps({"phase": "ERROR", "why": f"{type(e).__name__}: {e}",
+                               "trace": traceback.format_exc()[-1200:]})
+
+    def _log(self, info):
+        if self._log_w is None:
+            return
+        self._log_w.writerow(info)
+        self._rows += 1
+        if self._rows % 30 == 0:
+            self._log_f.flush()
+
+    def close(self):
+        if self._log_f:
+            self._log_f.close()
+            self._log_f = self._log_w = None
+        return "closed"
 
 
 # ------------------------------------------------------------ fontes de frames ---
