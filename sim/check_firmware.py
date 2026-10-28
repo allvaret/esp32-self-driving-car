@@ -6,8 +6,15 @@ Rode:  python check_firmware.py        (sai com codigo 1 se algo falhar)
 """
 import json, os, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..")))   # raiz do repositorio (control.hal)
-def run(inputs, args=(), t_end=20000, exe=os.path.join(HERE, "sim3")):
+def _repo_root(start):                         # sobe ate achar a pasta com control/hal.py
+    d = start
+    for _ in range(6):
+        if os.path.exists(os.path.join(d, "control", "hal.py")):
+            return d
+        d = os.path.dirname(d)
+    raise SystemExit("Nao achei a raiz do repositorio (pasta com control/hal.py) acima de " + start)
+sys.path.insert(0, _repo_root(HERE))
+def run(inputs, args=(), t_end=20000, exe=os.path.join(HERE, "sim3.exe" if os.path.exists(os.path.join(HERE, "sim3.exe")) else "sim3")):
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         for ms, s in sorted(inputs): f.write(f"{ms}\t{s}\n")
     out = subprocess.run([exe, "--t-end", str(t_end), "--input", f.name, *map(str, args)], capture_output=True, text=True).stdout.splitlines()

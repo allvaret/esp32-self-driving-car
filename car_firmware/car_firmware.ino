@@ -28,7 +28,7 @@
 #define FW_VERSION "car_firmware 0.1"
 
 // ======================= OPCOES DE COMPILACAO ===============================
-#define MOTORS_ENABLED 0        // 0 = bancada SEM motores: nada e escrito no L298N
+#define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
 #define STEER_SERVO 1           // direcao por servo (carro "esterca") + 2 motores de tracao
 #define STEER_DIFFERENTIAL 2    // sem servo de direcao: curva por diferenca de velocidade
 #define STEER_MODE STEER_DIFFERENTIAL
