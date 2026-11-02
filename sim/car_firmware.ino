@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.1
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.2
  *
  * DOIS MODOS (troque por `mode auto|phone` na serial ou DEFAULT_MODE abaixo):
  *   auto  : o ESP32 decide sozinho so com o sensor (mesma logica do controller.py, sem visao):
@@ -24,8 +24,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "net.h"
 
-#define FW_VERSION "car_firmware 0.1"
+#define FW_VERSION "car_firmware 0.2"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -36,9 +37,9 @@
 #define MODE_PHONE 1
 #define DEFAULT_MODE MODE_AUTO
 #define MOTOR_BRAKE 1           // 1 = freio ativo ao parar (IN1=IN2=HIGH); 0 = roda livre
-#define MOTOR_A_INVERT 0        // motor A (esquerdo) gira ao contrario? ponha 1
-#define MOTOR_B_INVERT 0        // motor B (direito)
-#define SENSOR_SERVO_SIGN 1     // +graus = direita. Se o servo girar ao contrario, ponha -1
+#define MOTOR_A_INVERT 1        // motor A (esquerdo) gira ao contrario? ponha 1
+#define MOTOR_B_INVERT 1        // motor B (direito)
+#define SENSOR_SERVO_SIGN -1     // +graus = direita. Se o servo girar ao contrario, ponha -1
 #define STEER_SERVO_SIGN 1
 #define HEARTBEAT_MS 500        // linha {"t":"state"...} periodica (0 = desliga)
 
@@ -75,7 +76,7 @@ struct Params {
   // distancias (cm)
   float d_stop_cm = 50, d_clear_cm = 100, hard_stop_cm = 20, none_score_cm = 50, max_range_cm = 200;
   // velocidades normalizadas [0,1]
-  float v_cruise = 0.5f, v_slow = 0.2f, v_rev = 0.3f, v_turn = 0.3f;
+  float v_cruise = 0.35f, v_slow = 0.15f, v_rev = 0.3f, v_turn = 0.3f;
   // manobra (ms) e servo
   float scan_deg = 45, stop_ms = 300, reverse_ms = 800, turn_ms = 1000, look_timeout_ms = 1000;
   float clear_ms = 200, avoid_retries = 2, settle_ms = 150;
@@ -83,9 +84,10 @@ struct Params {
   float guard_window_ms = 20000, guard_max = 2, backoff1_ms = 1000, backoff2_ms = 2000, backoff3_ms = 4000;
   // carro (calibrar com a bateria)
   float trim_left = 1.0f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
-  float pwm_min = 90, slew_per_s = 4.0f;
+  float pwm_min = 75, pwm_max = 140, slew_per_s = 4.0f;   // TT 3-6 V com 3S: ~3 V e ~6 V no motor
   // reflexo / phone
   float wd_ms = 500, fresh_ms = 400, max_rev_ms = 1500;
+  float sensor_trim_deg = 0;              // [DEMO] calibrar: corrige o zero do servo do sensor
 };
 static Params P;
 
@@ -101,8 +103,9 @@ static const KV PARAM_TABLE[] = {
   {"backoff1_ms", &P.backoff1_ms}, {"backoff2_ms", &P.backoff2_ms}, {"backoff3_ms", &P.backoff3_ms},
   {"trim_left", &P.trim_left}, {"trim_right", &P.trim_right}, {"steer_trim_deg", &P.steer_trim_deg},
   {"steer_max_deg", &P.steer_max_deg}, {"diff_gain", &P.diff_gain},
-  {"pwm_min", &P.pwm_min}, {"slew_per_s", &P.slew_per_s},
+  {"pwm_min", &P.pwm_min}, {"pwm_max", &P.pwm_max}, {"slew_per_s", &P.slew_per_s},
   {"wd_ms", &P.wd_ms}, {"fresh_ms", &P.fresh_ms}, {"max_rev_ms", &P.max_rev_ms},
+  {"sensor_trim_deg", &P.sensor_trim_deg},
 };
 static const int N_PARAMS = sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]);
 
@@ -210,7 +213,8 @@ static void aimTo(float deg, uint32_t now) {
   if (servoInit && absf(deg - servoDeg) < 0.01f) return;
   servoInit = true;
   servoDeg = deg;
-  servoUs(PIN_SENSOR_SERVO, CH_SENSOR_SERVO, SERVO_CENTER_US + SENSOR_SERVO_SIGN * deg * SERVO_US_PER_DEG);
+  servoUs(PIN_SENSOR_SERVO, CH_SENSOR_SERVO,
+          SERVO_CENTER_US + SENSOR_SERVO_SIGN * (deg + P.sensor_trim_deg) * SERVO_US_PER_DEG);
   tAim = now;
   ringN = 0;
   meas.valid = false;
@@ -240,8 +244,8 @@ static float medianKeep() {   // n=1: valor; n=2: o mais perto (conservador); n=
 }
 
 static void sendRange(float deg, float cm) {
-  if (cm < 0) Serial.printf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":null}\n", deg);
-  else Serial.printf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":%.1f}\n", deg, cm);
+  if (cm < 0) emitf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":null}\n", deg);
+  else emitf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":%.1f}\n", deg, cm);
 }
 
 static void sensorTask(uint32_t now) {
@@ -255,7 +259,7 @@ static void sensorTask(uint32_t now) {
   uint32_t t = now;                                  // mesmo relogio do loop (evita diferenca negativa sem sinal)
   meas.valid = true; meas.cm = med; meas.raw = raw; meas.t = t; meas.angle = servoDeg;
   if (absf(servoDeg) <= CENTER_TOL_DEG) { centerCm = med; centerRaw = raw; centerT = t; haveC = true; }
-  if (mode == MODE_PHONE) sendRange(servoDeg, med);
+  if (mode == MODE_PHONE || (netUp && ws.connectedClients() > 0)) sendRange(servoDeg, med);
 }
 
 static bool forwardAllowed(uint32_t now) {
@@ -278,8 +282,9 @@ static void motorWrite(int in1, int in2, int pin, int ch, float v) {
   bool fwd = v > 0;
   digitalWrite(in1, fwd ? HIGH : LOW);
   digitalWrite(in2, fwd ? LOW : HIGH);
-  float duty = P.pwm_min + a * (255.0f - P.pwm_min);
-  pwmWrite(pin, ch, (uint32_t)clampf(duty, 0.0f, 255.0f));
+  float hi = clampf(P.pwm_max, P.pwm_min, 255.0f);         // protege contra pwm_max < pwm_min via `set`
+  float duty = P.pwm_min + a * (hi - P.pwm_min);
+  pwmWrite(pin, ch, (uint32_t)clampf(duty, 0.0f, hi));
 #else
   (void)in1; (void)in2; (void)pin; (void)ch; (void)v;
 #endif
@@ -439,8 +444,8 @@ static void phoneStep(uint32_t now, float* v, float* s) {
 
 // ============================ ARMAR / BOTAO / LED ===========================
 static void setArmed(bool on, uint32_t now) {
-  if (on) { armPending = true; armAt = now + ARM_DELAY_MS; Serial.println("{\"t\":\"log\",\"msg\":\"armando em 3 s\"}"); }
-  else { armPending = false; armed = false; curL = curR = 0; Serial.println("{\"t\":\"log\",\"msg\":\"desarmado\"}"); }
+  if (on) { armPending = true; armAt = now + ARM_DELAY_MS; emitf("{\"t\":\"log\",\"msg\":\"armando em 3 s\"}"); }
+  else { armPending = false; armed = false; curL = curR = 0; emitf("{\"t\":\"log\",\"msg\":\"desarmado\"}"); }
 }
 
 static void buttonTask(uint32_t now) {
@@ -455,7 +460,7 @@ static void buttonTask(uint32_t now) {
   if (armPending && (int32_t)(now - armAt) >= 0) {
     armPending = false; armed = true; resetAuto(now);
     lastDriveT = now;
-    Serial.println("{\"t\":\"log\",\"msg\":\"ARMADO\"}");
+    emitf("{\"t\":\"log\",\"msg\":\"ARMADO\"}");
   }
 }
 
@@ -470,7 +475,7 @@ static void printHeartbeat(uint32_t now) {
   tHeartbeat = now;
   static const char* CN[] = {"CRUISE", "SCAN", "AVOID"};
   static const char* SN[] = {"", "WAIT", "STOP", "LOOK_L", "LOOK_R", "REVERSE", "TURN", "HOLD"};
-  Serial.printf("{\"t\":\"state\",\"mode\":\"%s\",\"armed\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
+  emitf("{\"t\":\"state\",\"mode\":\"%s\",\"armed\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
                 "\"L\":%.2f,\"R\":%.2f,\"why\":\"%s\"}\n",
                 mode == MODE_AUTO ? "auto" : "phone", armed ? "true" : "false",
                 mode == MODE_AUTO ? CN[cst] : "-", mode == MODE_AUTO ? SN[sub] : "",
@@ -490,7 +495,8 @@ static void handleJson(const char* line, uint32_t now) {
   } else if (strcmp(t, "cfg") == 0) {
     for (int i = 0; i < N_PARAMS; i++)
       if (jsonNum(line, PARAM_TABLE[i].key, &x)) *PARAM_TABLE[i].ptr = x;
-    Serial.println("{\"t\":\"cfg_ok\"}");
+    servoInit = false; aimTo(servoDeg, now);
+    emitf("{\"t\":\"cfg_ok\"}");
   } else if (strcmp(t, "mode") == 0) {
     char m[12];
     if (jsonStr(line, "m", m, sizeof(m))) {
@@ -501,8 +507,18 @@ static void handleJson(const char* line, uint32_t now) {
     bool on;
     if (jsonBool(line, "on", &on)) setArmed(on, now);
   } else if (strcmp(t, "ping") == 0) {
-    Serial.println("{\"t\":\"pong\"}");
-  }
+    emitf("{\"t\":\"pong\"}");
+  } else if (strcmp(t, "goal") == 0) {          // motivacao vinda do visor
+    char g[24];
+    if (jsonStr(line, "g", g, sizeof(g))) {
+      strncpy(netGoal, g, sizeof(netGoal) - 1);
+      if (strcmp(g, "parar") == 0) setArmed(false, now);
+      else if (mode == MODE_AUTO && !armed && !armPending) setArmed(true, now);
+     }
+     netRelay(line);
+   } else if (strcmp(t, "think") == 0) {         // pensamento do cerebro -> visores
+     netRelay(line);
+    }
 }
 
 static void handleText(char* line, uint32_t now) {         // comandos digitaveis no Monitor Serial
@@ -518,6 +534,7 @@ static void handleText(char* line, uint32_t now) {         // comandos digitavei
     bool ok = false;
     for (int i = 0; i < N_PARAMS; i++)
       if (strcmp(a, PARAM_TABLE[i].key) == 0) { *PARAM_TABLE[i].ptr = x; ok = true; }
+    if (ok) { servoInit = false; aimTo(servoDeg, now); }   // reenvia o pulso com trim/params novos
     Serial.printf(ok ? "%s = %.3f\n" : "parametro desconhecido: %s (%.3f)\n", a, x);
   } else if (strcmp(line, "get") == 0) {
     for (int i = 0; i < N_PARAMS; i++) Serial.printf("%s = %.3f\n", PARAM_TABLE[i].key, *PARAM_TABLE[i].ptr);
@@ -568,13 +585,15 @@ void setup() {
   aimTo(0, now);
   lastDriveT = now; tLastApply = now;
   driveApply(now, 0, 0);
-  Serial.printf("{\"t\":\"hello\",\"fw\":\"%s\",\"mode\":\"%s\",\"armed\":false,\"motors\":%d}\n",
+  netBegin();
+  emitf("{\"t\":\"hello\",\"fw\":\"%s\",\"mode\":\"%s\",\"armed\":false,\"motors\":%d}\n",
                 FW_VERSION, mode == MODE_AUTO ? "auto" : "phone", MOTORS_ENABLED);
 }
 
 void loop() {
   uint32_t now = millis();
   pollSerial(now);
+  netLoop();
   buttonTask(now);
   sensorTask(now);
   float v = 0, s = 0;
