@@ -42,6 +42,7 @@ class LiveActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_live)
+        BrainBridge.attachStatus(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         previewView = findViewById(R.id.preview)
         previewView.scaleType = PreviewView.ScaleType.FIT_CENTER   // mostra o mesmo campo que a analise
@@ -93,6 +94,7 @@ class LiveActivity : ComponentActivity() {
             val t0 = System.nanoTime()
             val json = s.callAttr("process_rgba_frame", arr, img.width, img.height,
                 plane.rowStride, img.imageInfo.rotationDegrees).toString()
+            BrainBridge.step(json)
             val pyMs = (System.nanoTime() - t0) / 1e6
 
             val now = System.nanoTime()
@@ -132,4 +134,8 @@ class LiveActivity : ComponentActivity() {
         exec.shutdown()
         super.onDestroy()
     }
+
+    override fun onResume() { super.onResume(); BrainBridge.start(); BrainBridge.resumeStatus() }
+
+    override fun onPause()  { BrainBridge.pauseStatus(); BrainBridge.stop(); super.onPause() }
 }
