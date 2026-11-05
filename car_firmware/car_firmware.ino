@@ -49,9 +49,9 @@
 #define PIN_ECHO 22             // ATENCAO: ECHO do HC-SR04 e 5 V -> divisor 1k/2k ate este pino
 #define PIN_SENSOR_SERVO 18
 #define PIN_STEER_SERVO 19
-#define PIN_ENA 25              // L298N: ENA (PWM) - retire o jumper do ENA
-#define PIN_IN1 26
-#define PIN_IN2 27
+#define PIN_ENA 19              // L298N: ENA (PWM) - retire o jumper do ENA
+#define PIN_IN1 16              
+#define PIN_IN2 17
 #define PIN_ENB 32              // L298N: ENB (PWM) - retire o jumper do ENB
 #define PIN_IN3 33
 #define PIN_IN4 21
@@ -84,7 +84,7 @@ struct Params {
   float guard_window_ms = 20000, guard_max = 2, backoff1_ms = 1000, backoff2_ms = 2000, backoff3_ms = 4000;
   // carro (calibrar com a bateria)
   float trim_left = 1.0f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
-  float pwm_min = 75, pwm_max = 140, slew_per_s = 4.0f;   // TT 3-6 V com 3S: ~3 V e ~6 V no motor
+  float pwm_min = 130, pwm_max = 150, slew_per_s = 4.0f;   // TT 3-6 V com 3S: ~3 V e ~6 V no motor
   // reflexo / phone
   float wd_ms = 500, fresh_ms = 400, max_rev_ms = 1500;
   float sensor_trim_deg = 0;              // [DEMO] calibrar: corrige o zero do servo do sensor
