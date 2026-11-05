@@ -79,7 +79,7 @@ function addLog(s,color){
 }
 function bar(el,v){v=Math.max(-1,Math.min(1,v));el.style.left=(v>=0?50:50+v*50)+'%';el.style.width=Math.abs(v)*50+'%';
   el.style.background=v<0?'var(--wa)':'var(--ac)';}
-let lastUp=null,lastWhy='',vizUrl='',rec=false,LOG=[];
+let lastUp=null,lastRst=null,lastWhy='',vizUrl='',rec=false,LOG=[];
 const LOG_MAX=60000;
 function handle(m){
   if(m.t==='state'){
@@ -87,7 +87,8 @@ function handle(m){
     $('st').textContent=m.mode==='auto'?(m.st+(m.sub?' / '+m.sub:'')):
       (m.esp?'ESP32 no comando: '+m.st+(m.sub?' / '+m.sub:''):'modo celular');
     if(m.up!=null){if(lastUp!=null&&m.up<lastUp)addLog('ESP32 REINICIOU (queda de energia?)','var(--er)');lastUp=m.up;
-      $('up').textContent='ligado ha '+m.up+' s';}
+      $('up').textContent='ligado ha '+m.up+' s'+(m.rst?' | ultimo reset: '+m.rst:'')+(m.rest?' | retomadas: '+m.rest:'');}
+    if(m.rst&&m.rst!==lastRst){if(lastRst!==null||m.up<15)addLog('motivo do ultimo reset: '+m.rst,m.rst==='LIGOU'?null:'var(--er)');lastRst=m.rst;}
     $('why').textContent=m.why||'';
     $('c').textContent='frente: '+(m.c<0?'livre (sem eco)':m.c.toFixed(0)+' cm');
     bar($('bl'),m.L);bar($('br'),m.R);

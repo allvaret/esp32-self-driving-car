@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.3
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.3.1
  *
  * DOIS MODOS (troque por `mode auto|phone` na serial ou DEFAULT_MODE abaixo):
  *   auto  : o ESP32 decide sozinho so com o sensor (mesma logica do controller.py, sem visao):
@@ -74,7 +74,7 @@
 #define MEASURE_PERIOD_MS 65    // HC-SR04: ciclo >= 60 ms
 #define ARM_DELAY_MS 3000
 #define MOTOR_PWM_HZ 1000
-#define KICK_STAGGER_MS 60      // motor B so recebe o pulso de partida 60 ms depois do A
+#define KICK_STAGGER_MS 60      // escalonamento: um motor parte 60 ms depois do outro
 
 // ============================== PARAMETROS ==================================
 struct Params {
@@ -162,8 +162,20 @@ static char why[56] = "";
 static char lineBuf[160];
 static int lineLen = 0;
 static uint32_t tHeartbeat = 0;
-struct Kick { int dir; uint32_t until; };
+struct Kick { int dir; uint32_t until; };     
 static Kick kickA = {0, 0}, kickB = {0, 0};
+
+// sobrevive a reset por brownout/panic/watchdog (nao a desligar a energia)
+#define RTC_MAGIC 0xCA770003u
+RTC_NOINIT_ATTR uint32_t rtcMagic;
+RTC_NOINIT_ATTR uint32_t rtcArmed;
+RTC_NOINIT_ATTR uint32_t rtcMode;
+RTC_NOINIT_ATTR uint32_t rtcRestores;
+RTC_NOINIT_ATTR char rtcGoal[24];
+static int resetReason = 0;
+static const char* RR[] = {"?", "LIGOU", "externo", "software", "PANIC", "wdt_int", "WDT_TASK", "WDT", "sono",
+                           "BROWNOUT", "sdio"};
+#define MAX_RESTORES 3                      // no maximo 3 retomadas seguidas sem desligar a energia
 
 // ============================== UTILIDADES ==================================
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
@@ -494,7 +506,7 @@ static void phoneStep(uint32_t now, float* v, float* s) {
 // ============================ ARMAR / BOTAO / LED ===========================
 static void setArmed(bool on, uint32_t now) {
   if (on) { armPending = true; armAt = now + ARM_DELAY_MS; emitf("{\"t\":\"log\",\"msg\":\"armando em 3 s\"}"); }
-  else { armPending = false; armed = false; delegated = false; curL = curR = 0; emitf("{\"t\":\"log\",\"msg\":\"desarmado\"}"); }
+  else { armPending = false; armed = false; delegated = false; curL = curR = 0; rtcArmed = 0; emitf("{\"t\":\"log\",\"msg\":\"desarmado\"}"); }
 }
 
 static void buttonTask(uint32_t now) {
@@ -507,7 +519,7 @@ static void buttonTask(uint32_t now) {
     if (r == LOW) setArmed(!(armed || armPending), now);
   }
   if (armPending && (int32_t)(now - armAt) >= 0) {
-    armPending = false; armed = true; resetAuto(now); delegated = false;
+    armPending = false; armed = true; resetAuto(now); delegated = false; rtcArmed = 1;
     lastDriveT = now;
     emitf("{\"t\":\"log\",\"msg\":\"ARMADO\"}");
   }
@@ -526,10 +538,11 @@ static void printHeartbeat(uint32_t now) {
   static const char* SN[] = {"", "WAIT", "STOP", "LOOK_L", "LOOK_R", "REVERSE", "TURN", "HOLD"};
   bool fsm = mode == MODE_AUTO || delegated;              // maquina de estados do ESP32 ativa?
   emitf("{\"t\":\"state\",\"mode\":\"%s\",\"armed\":%s,\"esp\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
-        "\"L\":%.2f,\"R\":%.2f,\"why\":\"%s\",\"up\":%lu}",
+        "\"L\":%.2f,\"R\":%.2f,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
         mode == MODE_AUTO ? "auto" : "phone", armed ? "true" : "false", delegated ? "true" : "false",
         fsm ? CN[cst] : "-", fsm ? SN[sub] : "",
-        centerCm, servoDeg, curL, curR, why, (unsigned long)(now / 1000));
+        centerCm, servoDeg, curL, curR, why, (unsigned long)(now / 1000),
+        (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?", (unsigned long)rtcRestores);
 }
 
 static void handleJson(const char* line, uint32_t now) {
@@ -551,7 +564,7 @@ static void handleJson(const char* line, uint32_t now) {
     char m[12];
     if (jsonStr(line, "m", m, sizeof(m))) {
       mode = strcmp(m, "phone") == 0 ? MODE_PHONE : MODE_AUTO;
-      cmdV = cmdS = 0; delegated = false; resetAuto(now);
+      cmdV = cmdS = 0; delegated = false; resetAuto(now); rtcMode = mode;
     }
   } else if (strcmp(t, "arm") == 0) {
     bool on;
@@ -564,6 +577,7 @@ static void handleJson(const char* line, uint32_t now) {
     char g[24];
     if (jsonStr(line, "g", g, sizeof(g))) {
       strncpy(netGoal, g, sizeof(netGoal) - 1);
+      strncpy(rtcGoal, g, sizeof(rtcGoal) - 1); rtcGoal[sizeof(rtcGoal) - 1] = 0;
       if (strcmp(g, "parar") == 0) setArmed(false, now);
       else if (mode == MODE_AUTO && !armed && !armPending) setArmed(true, now);
     }
@@ -580,7 +594,7 @@ static void handleText(char* line, uint32_t now) {         // comandos digitavei
   else if (strcmp(line, "stop") == 0) setArmed(false, now);
   else if (sscanf(line, "mode %23s", a) == 1) {
     mode = strcmp(a, "phone") == 0 ? MODE_PHONE : MODE_AUTO;
-    cmdV = cmdS = 0; delegated = false; resetAuto(now);
+    cmdV = cmdS = 0; delegated = false; resetAuto(now); rtcMode = mode;
     Serial.printf("modo = %s\n", a);
   } else if (sscanf(line, "set %23s %f", a, &x) == 2) {
     bool ok = false;
@@ -639,18 +653,30 @@ void setup() {
   lastDriveT = now; tLastApply = now;
   driveApply(now, 0, 0);
   netBegin();
-  int rr = (int)esp_reset_reason();
-  static const char* RR[] = {"?", "ligou", "externo", "software", "panic", "wdt_int", "wdt_task", "wdt", "sono",
-                             "BROWNOUT", "sdio"};
+  resetReason = (int)esp_reset_reason();
+  bool warm = resetReason != ESP_RST_POWERON && resetReason != ESP_RST_EXT && rtcMagic == RTC_MAGIC;
+  if (!warm) { rtcMagic = RTC_MAGIC; rtcArmed = 0; rtcMode = DEFAULT_MODE; rtcRestores = 0; rtcGoal[0] = 0; }
   emitf("{\"t\":\"hello\",\"fw\":\"%s\",\"mode\":\"%s\",\"armed\":false,\"motors\":%d,\"reset\":\"%s\"}",
-        FW_VERSION, mode == MODE_AUTO ? "auto" : "phone", MOTORS_ENABLED, (rr >= 0 && rr <= 10) ? RR[rr] : "?");
-  if (rr == ESP_RST_BROWNOUT) snprintf(netGoal, sizeof(netGoal), "reiniciou_brownout");
+        FW_VERSION, mode == MODE_AUTO ? "auto" : "phone", MOTORS_ENABLED,
+        (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?");
+  if (warm && rtcArmed && rtcRestores < MAX_RESTORES) {     // reset inesperado andando: retoma
+    rtcRestores++;
+    mode = rtcMode == MODE_PHONE ? MODE_PHONE : MODE_AUTO;
+    if (rtcGoal[0]) { strncpy(netGoal, rtcGoal, sizeof(netGoal) - 1); }
+    emitf("{\"t\":\"log\",\"msg\":\"reset inesperado (%s): retomando %d/%d\"}",
+          RR[resetReason <= 10 ? resetReason : 0], (int)rtcRestores, MAX_RESTORES);
+    setArmed(true, now);
+  } else if (warm && rtcArmed) {
+    rtcArmed = 0;
+    emitf("{\"t\":\"log\",\"msg\":\"muitos resets seguidos: fica parado\"}");
+  }
 }
 
 void loop() {
   uint32_t now = millis();
   pollSerial(now);
   netLoop();
+  if (rtcRestores && now > 30000) rtcRestores = 0;       // 30 s sem cair: zera o contador de retomadas
   buttonTask(now);
   sensorTask(now);
   float v = 0, s = 0;
