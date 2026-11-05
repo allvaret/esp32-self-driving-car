@@ -46,7 +46,7 @@ canvas{width:100%;height:auto;display:block}
 <div class="card"><div class="lbl">Estado</div>
 <div class="big" id="st">-</div>
 <div id="why" style="color:var(--mu);min-height:1.2em"></div>
-<div style="margin-top:8px"><span class="chip" id="c">frente: -</span><span class="chip" id="vis">visao: -</span></div></div>
+<div style="margin-top:8px"><span class="chip" id="c">frente: -</span><span class="chip" id="vis">visao: -</span><span class="chip" id="up">-</span></div></div>
 
 <div class="card"><div class="lbl">Visao do robo (frame | retroprojecao | mascara)</div>
 <img id="viz" alt="aguardando o celular..." style="width:100%;display:block;image-rendering:pixelated;background:#000;min-height:60px;color:var(--mu)"></div>
@@ -79,12 +79,15 @@ function addLog(s,color){
 }
 function bar(el,v){v=Math.max(-1,Math.min(1,v));el.style.left=(v>=0?50:50+v*50)+'%';el.style.width=Math.abs(v)*50+'%';
   el.style.background=v<0?'var(--wa)':'var(--ac)';}
-let lastWhy='',vizUrl='',rec=false,LOG=[];
+let lastUp=null,lastWhy='',vizUrl='',rec=false,LOG=[];
 const LOG_MAX=60000;
 function handle(m){
   if(m.t==='state'){
     const a=m.armed;$('armed').textContent=a?'ARMADO':'desarmado';$('armed').style.background=a?'var(--ok)':'#2d333b';
-    $('st').textContent=m.mode==='auto'?(m.st+(m.sub?' / '+m.sub:'')):'modo celular';
+    $('st').textContent=m.mode==='auto'?(m.st+(m.sub?' / '+m.sub:'')):
+      (m.esp?'ESP32 no comando: '+m.st+(m.sub?' / '+m.sub:''):'modo celular');
+    if(m.up!=null){if(lastUp!=null&&m.up<lastUp)addLog('ESP32 REINICIOU (queda de energia?)','var(--er)');lastUp=m.up;
+      $('up').textContent='ligado ha '+m.up+' s';}
     $('why').textContent=m.why||'';
     $('c').textContent='frente: '+(m.c<0?'livre (sem eco)':m.c.toFixed(0)+' cm');
     bar($('bl'),m.L);bar($('br'),m.R);
@@ -99,7 +102,8 @@ function handle(m){
   }else if(m.t==='goal'){
     document.querySelectorAll('[data-g]').forEach(b=>b.classList.toggle('on',b.dataset.g===m.g));
     addLog('motivacao: '+m.g,'var(--ac)');
-  }else if(m.t==='log'){addLog('[esp32] '+m.msg);}
+  }else if(m.t==='log'){addLog('[esp32] '+m.msg);
+  }else if(m.t==='hello'){addLog('ESP32 iniciou (reset: '+m.reset+')',m.reset==='BROWNOUT'?'var(--er)':null);}
 }
 function draw(){
   const c=$('rad'),g=c.getContext('2d'),W=c.width,H=c.height,cx=W/2,cy=H-10,R=H-20,MAX=200,now=Date.now();

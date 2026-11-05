@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.2
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.3
  *
  * DOIS MODOS (troque por `mode auto|phone` na serial ou DEFAULT_MODE abaixo):
  *   auto  : o ESP32 decide sozinho so com o sensor (mesma logica do controller.py, sem visao):
@@ -12,7 +12,10 @@
  * SEGURANCA (valem nos dois modos):
  *   - motores so giram ARMADO: botao BOOT (GPIO0) ou `go` na serial, com contagem de 3 s;
  *   - anda para frente SO com leitura central fresca e >= hard_stop_cm (sem leitura = parado);
- *   - phone: sem comando `drive` por wd_ms -> para;  re continua no maximo max_rev_ms.
+ *   - phone: sem comando `drive` por wd_ms -> ESP32 assume no modo sensor (fallback auto);
+ *            {"t":"avoid"} -> ESP32 faz o desvio (para, olha L/R com o servo, re, curva) e devolve
+ *            o controle ao celular quando termina. re continua no maximo max_rev_ms.
+ *   - partida dos motores escalonada (um de cada vez) e nunca junto com o servo se movendo.
  * Fiacao, comandos e testes de bancada: esp32/README_FIRMWARE.md
  * Valores [DEMO]: calibrar (ver docs/PARAMETROS_A_CALIBRAR.md). Mantenha coerente com config.py.
  */
@@ -24,9 +27,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <esp_system.h>
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.2"
+#define FW_VERSION "car_firmware 0.3"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -48,10 +52,10 @@
 #define PIN_TRIG 23
 #define PIN_ECHO 22             // ATENCAO: ECHO do HC-SR04 e 5 V -> divisor 1k/2k ate este pino
 #define PIN_SENSOR_SERVO 18
-#define PIN_STEER_SERVO 19
-#define PIN_ENA 19              // L298N: ENA (PWM) - retire o jumper do ENA
-#define PIN_IN1 16              
-#define PIN_IN2 17
+#define PIN_STEER_SERVO 4       // so no STEER_SERVO (nao usado no diferencial)
+#define PIN_ENA 19              // L298N: ENA (PWM). 25/26/27 com defeito nesta placa
+#define PIN_IN1 16              // RX2
+#define PIN_IN2 17              // TX2
 #define PIN_ENB 32              // L298N: ENB (PWM) - retire o jumper do ENB
 #define PIN_IN3 33
 #define PIN_IN4 21
@@ -70,24 +74,27 @@
 #define MEASURE_PERIOD_MS 65    // HC-SR04: ciclo >= 60 ms
 #define ARM_DELAY_MS 3000
 #define MOTOR_PWM_HZ 1000
+#define KICK_STAGGER_MS 60      // motor B so recebe o pulso de partida 60 ms depois do A
 
 // ============================== PARAMETROS ==================================
 struct Params {
   // distancias (cm)
   float d_stop_cm = 50, d_clear_cm = 100, hard_stop_cm = 20, none_score_cm = 50, max_range_cm = 200;
   // velocidades normalizadas [0,1]
-  float v_cruise = 0.5f, v_slow = 0.2f, v_rev = 0.3f, v_turn = 0.3f;
+  float v_cruise = 0.35f, v_slow = 0.15f, v_rev = 0.3f, v_turn = 0.3f;
   // manobra (ms) e servo
   float scan_deg = 45, stop_ms = 300, reverse_ms = 800, turn_ms = 1000, look_timeout_ms = 1000;
   float clear_ms = 200, avoid_retries = 2, settle_ms = 150;
   // guarda de reentrada
   float guard_window_ms = 20000, guard_max = 2, backoff1_ms = 1000, backoff2_ms = 2000, backoff3_ms = 4000;
   // carro (calibrar com a bateria)
-  float trim_left = 1.0f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
-  float pwm_min = 130, pwm_max = 150, slew_per_s = 4.0f;   // TT 3-6 V com 3S: ~3 V e ~6 V no motor
+  float trim_left = 0.8f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
+  float pwm_min = 130, pwm_max = 150, slew_per_s = 2.0f;   // [DEMO] valores atuais do carro
+  float kick_pwm = 200, kick_ms = 0;                         // arrancada desligada
   // reflexo / phone
   float wd_ms = 500, fresh_ms = 400, max_rev_ms = 1500;
-  float sensor_trim_deg = 0;              // [DEMO] calibrar: corrige o zero do servo do sensor
+  float sensor_trim_deg = 0;              // [DEMO] corrige o zero do servo do sensor
+  float fallback_auto = 1;                // 1 = sem celular, ESP32 segue so com o sensor; 0 = para
 };
 static Params P;
 
@@ -104,8 +111,9 @@ static const KV PARAM_TABLE[] = {
   {"trim_left", &P.trim_left}, {"trim_right", &P.trim_right}, {"steer_trim_deg", &P.steer_trim_deg},
   {"steer_max_deg", &P.steer_max_deg}, {"diff_gain", &P.diff_gain},
   {"pwm_min", &P.pwm_min}, {"pwm_max", &P.pwm_max}, {"slew_per_s", &P.slew_per_s},
+  {"kick_pwm", &P.kick_pwm}, {"kick_ms", &P.kick_ms},
   {"wd_ms", &P.wd_ms}, {"fresh_ms", &P.fresh_ms}, {"max_rev_ms", &P.max_rev_ms},
-  {"sensor_trim_deg", &P.sensor_trim_deg},
+  {"sensor_trim_deg", &P.sensor_trim_deg}, {"fallback_auto", &P.fallback_auto},
 };
 static const int N_PARAMS = sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]);
 
@@ -130,6 +138,8 @@ static uint32_t centerT = 0;
 
 static float cmdV = 0, cmdS = 0;           // ultimo drive do celular
 static uint32_t lastDriveT = 0;
+static bool delegated = false;             // phone: ESP32 no comando (sem celular ou desvio pedido)
+static bool avoidReq = false;              // phone: celular pediu desvio
 
 static float curL = 0, curR = 0;           // saida dos motores (apos rampa)
 static uint32_t tLastApply = 0;
@@ -152,6 +162,8 @@ static char why[56] = "";
 static char lineBuf[160];
 static int lineLen = 0;
 static uint32_t tHeartbeat = 0;
+struct Kick { int dir; uint32_t until; };
+static Kick kickA = {0, 0}, kickB = {0, 0};
 
 // ============================== UTILIDADES ==================================
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
@@ -244,8 +256,8 @@ static float medianKeep() {   // n=1: valor; n=2: o mais perto (conservador); n=
 }
 
 static void sendRange(float deg, float cm) {
-  if (cm < 0) emitf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":null}\n", deg);
-  else emitf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":%.1f}\n", deg, cm);
+  if (cm < 0) emitf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":null}", deg);
+  else emitf("{\"t\":\"range\",\"deg\":%.1f,\"cm\":%.1f}", deg, cm);
 }
 
 static void sensorTask(uint32_t now) {
@@ -268,10 +280,11 @@ static bool forwardAllowed(uint32_t now) {
 }
 
 // ================================ MOTORES ===================================
-static void motorWrite(int in1, int in2, int pin, int ch, float v) {
+static void motorWrite(int in1, int in2, int pin, int ch, float v, Kick& k, uint32_t now, uint32_t delayMs) {
 #if MOTORS_ENABLED
   float a = absf(v);
   if (a < 0.02f) {
+    k.dir = 0;                                             // parado: a proxima saida ganha pulso
 #if MOTOR_BRAKE
     digitalWrite(in1, HIGH); digitalWrite(in2, HIGH); pwmWrite(pin, ch, 255);
 #else
@@ -279,14 +292,20 @@ static void motorWrite(int in1, int in2, int pin, int ch, float v) {
 #endif
     return;
   }
-  bool fwd = v > 0;
-  digitalWrite(in1, fwd ? HIGH : LOW);
-  digitalWrite(in2, fwd ? LOW : HIGH);
-  float hi = clampf(P.pwm_max, P.pwm_min, 255.0f);         // protege contra pwm_max < pwm_min via `set`
+  int dir = v > 0 ? 1 : -1;
+  if (dir != k.dir) { k.dir = dir; k.until = now + delayMs + (uint32_t)P.kick_ms; }  // saiu do zero/inverteu
+  digitalWrite(in1, dir > 0 ? HIGH : LOW);
+  digitalWrite(in2, dir > 0 ? LOW : HIGH);
+  float hi = clampf(P.pwm_max, P.pwm_min, 255.0f);
   float duty = P.pwm_min + a * (hi - P.pwm_min);
-  pwmWrite(pin, ch, (uint32_t)clampf(duty, 0.0f, hi));
+  int32_t left = (int32_t)(k.until - now);
+  if (left > 0) {
+    if (left > (int32_t)P.kick_ms) duty = 0;               // escalonamento: espera a vez de partir
+    else if (P.kick_pwm > duty) duty = P.kick_pwm;         // arrancada
+  }
+  pwmWrite(pin, ch, (uint32_t)clampf(duty, 0.0f, 255.0f));
 #else
-  (void)in1; (void)in2; (void)pin; (void)ch; (void)v;
+  (void)in1; (void)in2; (void)pin; (void)ch; (void)v; (void)k; (void)now; (void)delayMs;
 #endif
 }
 
@@ -299,6 +318,8 @@ static float slewTo(float cur, float target, float maxStep) {
 
 static void driveApply(uint32_t now, float v, float s) {
   if (!armed) { v = 0; s = 0; }
+  bool servoMoving = (now - tAim) < (uint32_t)P.settle_ms;
+  if (servoMoving && absf(curL) < 0.02f && absf(curR) < 0.02f) { v = 0; s = 0; }  // nao parte com servo girando
   if (v > 0 && !forwardAllowed(now)) v = 0;              // reflexo: sem leitura livre, nao avanca
   if (v < 0) {                                           // re e cega: limite de duracao continua
     if (!revActive) { revActive = true; tRevStart = now; }
@@ -330,8 +351,10 @@ static void driveApply(uint32_t now, float v, float s) {
   float step = P.slew_per_s * (dt > 0.2f ? 0.2f : dt);
   curL = slewTo(curL, L, step);
   curR = slewTo(curR, R, step);
-  motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_A_INVERT ? -curL : curL);
-  motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_B_INVERT ? -curR : curR);
+  // direito (mais fraco) parte primeiro; esquerdo espera KICK_STAGGER_MS
+  motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_B_INVERT ? -curR : curR, kickB, now, 0);
+  motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_A_INVERT ? -curL : curL, kickA, now,
+             kickB.dir != 0 ? KICK_STAGGER_MS : 0);
 }
 
 // ============================ MAQUINA DE ESTADOS (auto) =====================
@@ -438,14 +461,40 @@ static void autoStep(uint32_t now, float* v, float* s) {
 }
 
 static void phoneStep(uint32_t now, float* v, float* s) {
-  if (now - lastDriveT > (uint32_t)P.wd_ms) { *v = 0; *s = 0; return; }   // watchdog
+  bool fresh = now - lastDriveT <= (uint32_t)P.wd_ms;
+  if (avoidReq) {                                          // celular pediu desvio
+    avoidReq = false;
+    if (!delegated || cst != C_AVOID) {
+      delegated = true;
+      cst = C_CRUISE; sub = S_NONE;
+      enterAvoid(now, "celular: obstaculo");
+      emitf("{\"t\":\"log\",\"msg\":\"ESP32 assumiu: desvio pedido\"}");
+    }
+  }
+  if (delegated) {
+    if (cst == C_AVOID) { autoStep(now, v, s); return; }   // termina a manobra antes de devolver
+    if (fresh) {                                           // celular voltou e manobra acabou
+      delegated = false;
+      aimTo(0, now);
+      emitf("{\"t\":\"log\",\"msg\":\"celular retomou o controle\"}");
+    } else if (P.fallback_auto > 0.5f) { autoStep(now, v, s); return; }
+    else { *v = 0; *s = 0; return; }
+  }
+  if (!fresh) {                                            // watchdog
+    if (P.fallback_auto > 0.5f) {
+      delegated = true; resetAuto(now);
+      emitf("{\"t\":\"log\",\"msg\":\"sem celular: ESP32 segue so com o sensor\"}");
+      autoStep(now, v, s);
+    } else { *v = 0; *s = 0; }
+    return;
+  }
   *v = cmdV; *s = cmdS;
 }
 
 // ============================ ARMAR / BOTAO / LED ===========================
 static void setArmed(bool on, uint32_t now) {
   if (on) { armPending = true; armAt = now + ARM_DELAY_MS; emitf("{\"t\":\"log\",\"msg\":\"armando em 3 s\"}"); }
-  else { armPending = false; armed = false; curL = curR = 0; emitf("{\"t\":\"log\",\"msg\":\"desarmado\"}"); }
+  else { armPending = false; armed = false; delegated = false; curL = curR = 0; emitf("{\"t\":\"log\",\"msg\":\"desarmado\"}"); }
 }
 
 static void buttonTask(uint32_t now) {
@@ -458,7 +507,7 @@ static void buttonTask(uint32_t now) {
     if (r == LOW) setArmed(!(armed || armPending), now);
   }
   if (armPending && (int32_t)(now - armAt) >= 0) {
-    armPending = false; armed = true; resetAuto(now);
+    armPending = false; armed = true; resetAuto(now); delegated = false;
     lastDriveT = now;
     emitf("{\"t\":\"log\",\"msg\":\"ARMADO\"}");
   }
@@ -475,11 +524,12 @@ static void printHeartbeat(uint32_t now) {
   tHeartbeat = now;
   static const char* CN[] = {"CRUISE", "SCAN", "AVOID"};
   static const char* SN[] = {"", "WAIT", "STOP", "LOOK_L", "LOOK_R", "REVERSE", "TURN", "HOLD"};
-  emitf("{\"t\":\"state\",\"mode\":\"%s\",\"armed\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
-                "\"L\":%.2f,\"R\":%.2f,\"why\":\"%s\"}\n",
-                mode == MODE_AUTO ? "auto" : "phone", armed ? "true" : "false",
-                mode == MODE_AUTO ? CN[cst] : "-", mode == MODE_AUTO ? SN[sub] : "",
-                centerCm, servoDeg, curL, curR, why);
+  bool fsm = mode == MODE_AUTO || delegated;              // maquina de estados do ESP32 ativa?
+  emitf("{\"t\":\"state\",\"mode\":\"%s\",\"armed\":%s,\"esp\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
+        "\"L\":%.2f,\"R\":%.2f,\"why\":\"%s\",\"up\":%lu}",
+        mode == MODE_AUTO ? "auto" : "phone", armed ? "true" : "false", delegated ? "true" : "false",
+        fsm ? CN[cst] : "-", fsm ? SN[sub] : "",
+        centerCm, servoDeg, curL, curR, why, (unsigned long)(now / 1000));
 }
 
 static void handleJson(const char* line, uint32_t now) {
@@ -487,7 +537,7 @@ static void handleJson(const char* line, uint32_t now) {
   if (!jsonStr(line, "t", t, sizeof(t))) return;
   float x;
   if (strcmp(t, "aim") == 0) {
-    if (mode == MODE_PHONE && jsonNum(line, "deg", &x)) aimTo(x, now);
+    if (mode == MODE_PHONE && !delegated && jsonNum(line, "deg", &x)) aimTo(x, now);
   } else if (strcmp(t, "drive") == 0) {
     float v = 0, s = 0;
     jsonNum(line, "v", &v); jsonNum(line, "s", &s);
@@ -495,30 +545,32 @@ static void handleJson(const char* line, uint32_t now) {
   } else if (strcmp(t, "cfg") == 0) {
     for (int i = 0; i < N_PARAMS; i++)
       if (jsonNum(line, PARAM_TABLE[i].key, &x)) *PARAM_TABLE[i].ptr = x;
-    servoInit = false; aimTo(servoDeg, now);
+    servoInit = false; aimTo(servoDeg, now);              // reaplica trim do servo
     emitf("{\"t\":\"cfg_ok\"}");
   } else if (strcmp(t, "mode") == 0) {
     char m[12];
     if (jsonStr(line, "m", m, sizeof(m))) {
       mode = strcmp(m, "phone") == 0 ? MODE_PHONE : MODE_AUTO;
-      cmdV = cmdS = 0; resetAuto(now);
+      cmdV = cmdS = 0; delegated = false; resetAuto(now);
     }
   } else if (strcmp(t, "arm") == 0) {
     bool on;
     if (jsonBool(line, "on", &on)) setArmed(on, now);
   } else if (strcmp(t, "ping") == 0) {
     emitf("{\"t\":\"pong\"}");
-  } else if (strcmp(t, "goal") == 0) {          // motivacao vinda do visor
+  } else if (strcmp(t, "avoid") == 0) {        // celular viu obstaculo: ESP32 faz o desvio com o sensor
+    if (mode == MODE_PHONE && armed) avoidReq = true;
+  } else if (strcmp(t, "goal") == 0) {         // motivacao vinda do visor
     char g[24];
     if (jsonStr(line, "g", g, sizeof(g))) {
       strncpy(netGoal, g, sizeof(netGoal) - 1);
       if (strcmp(g, "parar") == 0) setArmed(false, now);
       else if (mode == MODE_AUTO && !armed && !armPending) setArmed(true, now);
-     }
-     netRelay(line);
-   } else if (strcmp(t, "think") == 0) {         // pensamento do cerebro -> visores
-     netRelay(line);
     }
+    netRelay(line);
+  } else if (strcmp(t, "think") == 0) {        // pensamento do cerebro -> visores
+    netRelay(line);
+  }
 }
 
 static void handleText(char* line, uint32_t now) {         // comandos digitaveis no Monitor Serial
@@ -528,21 +580,22 @@ static void handleText(char* line, uint32_t now) {         // comandos digitavei
   else if (strcmp(line, "stop") == 0) setArmed(false, now);
   else if (sscanf(line, "mode %23s", a) == 1) {
     mode = strcmp(a, "phone") == 0 ? MODE_PHONE : MODE_AUTO;
-    cmdV = cmdS = 0; resetAuto(now);
+    cmdV = cmdS = 0; delegated = false; resetAuto(now);
     Serial.printf("modo = %s\n", a);
   } else if (sscanf(line, "set %23s %f", a, &x) == 2) {
     bool ok = false;
     for (int i = 0; i < N_PARAMS; i++)
       if (strcmp(a, PARAM_TABLE[i].key) == 0) { *PARAM_TABLE[i].ptr = x; ok = true; }
-    if (ok) { servoInit = false; aimTo(servoDeg, now); }   // reenvia o pulso com trim/params novos
+    if (ok) { servoInit = false; aimTo(servoDeg, now); }   // reaplica trim do servo
     Serial.printf(ok ? "%s = %.3f\n" : "parametro desconhecido: %s (%.3f)\n", a, x);
   } else if (strcmp(line, "get") == 0) {
     for (int i = 0; i < N_PARAMS; i++) Serial.printf("%s = %.3f\n", PARAM_TABLE[i].key, *PARAM_TABLE[i].ptr);
   } else if (sscanf(line, "aim %f", &x) == 1) { aimTo(x, now); Serial.printf("aim %.1f\n", x); }
   else if (sscanf(line, "drive %f %f", &x, &y) == 2) { cmdV = x; cmdS = y; lastDriveT = now; Serial.printf("drive %.2f %.2f\n", x, y); }
   else if (strcmp(line, "status") == 0) { tHeartbeat = 0; printHeartbeat(now); }
+  else if (strcmp(line, "avoid") == 0) { if (mode == MODE_PHONE && armed) avoidReq = true; }
   else if (strcmp(line, "help") == 0)
-    Serial.println("go | stop | mode auto|phone | set <chave> <valor> | get | aim <graus> | drive <v> <s> | status");
+    Serial.println("go | stop | mode auto|phone | set <chave> <valor> | get | aim <graus> | drive <v> <s> | avoid | status");
   (void)b;
 }
 
@@ -586,8 +639,12 @@ void setup() {
   lastDriveT = now; tLastApply = now;
   driveApply(now, 0, 0);
   netBegin();
-  emitf("{\"t\":\"hello\",\"fw\":\"%s\",\"mode\":\"%s\",\"armed\":false,\"motors\":%d}\n",
-                FW_VERSION, mode == MODE_AUTO ? "auto" : "phone", MOTORS_ENABLED);
+  int rr = (int)esp_reset_reason();
+  static const char* RR[] = {"?", "ligou", "externo", "software", "panic", "wdt_int", "wdt_task", "wdt", "sono",
+                             "BROWNOUT", "sdio"};
+  emitf("{\"t\":\"hello\",\"fw\":\"%s\",\"mode\":\"%s\",\"armed\":false,\"motors\":%d,\"reset\":\"%s\"}",
+        FW_VERSION, mode == MODE_AUTO ? "auto" : "phone", MOTORS_ENABLED, (rr >= 0 && rr <= 10) ? RR[rr] : "?");
+  if (rr == ESP_RST_BROWNOUT) snprintf(netGoal, sizeof(netGoal), "reiniciou_brownout");
 }
 
 void loop() {
