@@ -20,15 +20,16 @@ v1: "reto" e "explorar" se comportam igual (andar reto ate obstaculo). Parametro
 import json
 import threading
 import time
-
+import viz
 from tools.ws_link import WsLink
 
 # ----------------------------- parametros [DEMO] -----------------------------
 URL = "ws://192.168.4.1:81/"
-V_FREE = 0.35        # velocidade em LIVRE (normalizada 0..1, o ESP32 aplica pwm_min/pwm_max)
-V_SLOW = 0.15        # velocidade em INCERTO
+V_FREE = 0.5       # velocidade em LIVRE (normalizada 0..1, o ESP32 aplica pwm_min/pwm_max)
+V_SLOW = 0.3        # velocidade em INCERTO
 THINK_MIN_S = 0.5    # no maximo 2 pensamentos/s se o estado nao mudar
 GOALS_MOVE = ("explorar", "reto")
+VIZ_ANNOUNCE_S = 3.0  # reanuncia o endereco do stream (visor que conecta depois tambem recebe)
 
 # ----------------------------------- estado ----------------------------------
 _link = None
@@ -36,6 +37,7 @@ _lock = threading.Lock()
 _last_goal = None
 _last_state = None
 _last_think_t = 0.0
+_last_viz_t = 0.0
 
 
 def start(url=URL):
@@ -44,6 +46,8 @@ def start(url=URL):
     with _lock:
         if _link is None:
             _link = WsLink(url).start()
+        if viz is not None:
+            viz.start()
     return True
 
 
@@ -57,6 +61,8 @@ def stop():
             time.sleep(0.1)
             _link.stop()
             _link = None
+        if viz is not None:
+            viz.stop()
         _last_goal = None
 
 
@@ -110,7 +116,7 @@ def _norm_state(estado):
 
 def step(estado, conf=None, msg=None):
     """Chamar a cada frame. Retorna (v, s) enviado, para debug."""
-    global _last_goal, _last_state, _last_think_t
+    global _last_goal, _last_state, _last_think_t, _last_viz_t
     with _lock:
         link = _link
         if link is None or not link.connected:
@@ -146,8 +152,14 @@ def step(estado, conf=None, msg=None):
         s = 0.0
         link.drive(v, s)
 
-        # pensamento (limitado)
         now = time.time()
+        if viz is not None and now - _last_viz_t >= VIZ_ANNOUNCE_S:
+            _last_viz_t = now
+            u = viz.url()
+            if u:
+                link.send({"t": "think", "viz": u})
+
+        # pensamento (limitado)
         if st != _last_state or now - _last_think_t >= THINK_MIN_S:
             _last_state = st
             _last_think_t = now
