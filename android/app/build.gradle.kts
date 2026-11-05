@@ -75,7 +75,7 @@ val syncPython = tasks.register<Sync>("syncPython") {
     from(rootDir.parentFile) {          // rootDir = <repo>/android  ->  parentFile = <repo>
         include("config.py", "vision/*.py", "control/*.py",
             "tools/__init__.py", "tools/bench_s9.py", "tools/android_entry.py",
-            "tools/ws_link.py", "brain.py", "main.py")
+            "tools/ws_link.py", "brain.py", "viz.py", "main.py")
     }
     into(layout.projectDirectory.dir("src/main/python"))
 }

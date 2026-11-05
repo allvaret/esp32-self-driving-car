@@ -13,6 +13,8 @@ Logica:
     - motivacao (goal) vem do visor: "explorar"/"reto" -> anda; "parar"/"nenhuma"/None -> parado
     - ao chegar motivacao nova: mode phone + arm (UMA vez; arm repetido reinicia os 3 s)
     - LIVRE -> V_FREE, INCERTO -> V_SLOW, OBSTACULO/desconhecido -> 0
+    - OBSTACULO -> pede {"t":"avoid"}: o ESP32 executa o desvio com o sensor e devolve o controle
+    - se o celular cair, o ESP32 segue sozinho no modo sensor (firmware 0.3, fallback_auto)
     - drive a cada frame (o ESP32 para sozinho se nao chegar nada em 500 ms)
     - think so quando o estado muda ou a cada THINK_MIN_S
 v1: "reto" e "explorar" se comportam igual (andar reto ate obstaculo). Parametros abaixo.
@@ -20,7 +22,7 @@ v1: "reto" e "explorar" se comportam igual (andar reto ate obstaculo). Parametro
 import json
 import threading
 import time
-
+import viz
 from tools.ws_link import WsLink
 
 # ----------------------------- parametros [DEMO] -----------------------------
@@ -29,6 +31,8 @@ V_FREE = 0.35        # velocidade em LIVRE (normalizada 0..1, o ESP32 aplica pwm
 V_SLOW = 0.15        # velocidade em INCERTO
 THINK_MIN_S = 0.5    # no maximo 2 pensamentos/s se o estado nao mudar
 GOALS_MOVE = ("explorar", "reto")
+AVOID_EVERY_S = 2.0   # OBSTACULO: pede desvio ao ESP32 (ele usa o sensor no servo) no maximo a cada 2 s
+VIZ_ANNOUNCE_S = 3.0  # reanuncia o endereco do stream (visor que conecta depois tambem recebe)
 
 # ----------------------------------- estado ----------------------------------
 _link = None
@@ -36,6 +40,8 @@ _lock = threading.Lock()
 _last_goal = None
 _last_state = None
 _last_think_t = 0.0
+_last_viz_t = 0.0
+_last_avoid_t = 0.0
 
 
 def start(url=URL):
@@ -44,6 +50,8 @@ def start(url=URL):
     with _lock:
         if _link is None:
             _link = WsLink(url).start()
+        if viz is not None:
+            viz.start()
     return True
 
 
@@ -57,6 +65,8 @@ def stop():
             time.sleep(0.1)
             _link.stop()
             _link = None
+        if viz is not None:
+            viz.stop()
         _last_goal = None
 
 
@@ -110,7 +120,7 @@ def _norm_state(estado):
 
 def step(estado, conf=None, msg=None):
     """Chamar a cada frame. Retorna (v, s) enviado, para debug."""
-    global _last_goal, _last_state, _last_think_t
+    global _last_goal, _last_state, _last_think_t, _last_viz_t, _last_avoid_t
     with _lock:
         link = _link
         if link is None or not link.connected:
@@ -146,8 +156,22 @@ def step(estado, conf=None, msg=None):
         s = 0.0
         link.drive(v, s)
 
-        # pensamento (limitado)
+        # obstaculo: o ESP32 faz o desvio (para, olha L/R, re, curva) e devolve o controle
+        esp = link.state or {}
         now = time.time()
+        if (goal in GOALS_MOVE and st == "OBSTACULO" and esp.get("armed")
+                and esp.get("st") != "AVOID" and now - _last_avoid_t >= AVOID_EVERY_S):
+            _last_avoid_t = now
+            link.send({"t": "avoid"})
+            link.think("obstaculo na visao: pedindo desvio ao ESP32", state=st)
+
+        if viz is not None and now - _last_viz_t >= VIZ_ANNOUNCE_S:
+            _last_viz_t = now
+            u = viz.url()
+            if u:
+                link.send({"t": "think", "viz": u})
+
+        # pensamento (limitado)
         if st != _last_state or now - _last_think_t >= THINK_MIN_S:
             _last_state = st
             _last_think_t = now

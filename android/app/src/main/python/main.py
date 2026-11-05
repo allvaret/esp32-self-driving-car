@@ -20,6 +20,7 @@ from vision import edge_probe
 from vision.coverage_log import WARMUP, coverage_row, floor_prob
 from vision.decision import DecisionMaker
 from vision.ground import calibrate_thr, floor_mask, learn_floor_hist
+import viz
 
 STOP = Drive(0.0, 0.0)
 
@@ -97,6 +98,7 @@ class Runner:
                     "why": "aprendendo o chao", "guard_level": 0}
         else:
             mask = floor_mask(frame_bgr, self.hist, self.thr)
+            viz.push(frame=frame_bgr, mask=mask)
             prob, hsv = floor_prob(frame_bgr, self.hist)
             cov = coverage_row(mask, prob, hsv, self._n, t)
             vstate = self.dm.update(cov["prob_mean_cen"], cov["unknown_inf"], cov["unknown_cen"], t)
