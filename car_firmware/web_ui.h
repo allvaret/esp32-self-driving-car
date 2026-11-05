@@ -37,12 +37,19 @@ canvas{width:100%;height:auto;display:block}
 <button data-m="auto">Modo auto (so sensor)</button>
 <button data-m="phone">Modo celular (visao)</button>
 </div>
-<button id="stop">PARAR TUDO</button></div>
+<button id="stop">PARAR TUDO</button>
+<div class="row" style="margin-top:8px">
+<button id="rec">Gravar log</button>
+<button id="dl">Baixar log (0)</button>
+</div></div>
 
 <div class="card"><div class="lbl">Estado</div>
 <div class="big" id="st">-</div>
 <div id="why" style="color:var(--mu);min-height:1.2em"></div>
 <div style="margin-top:8px"><span class="chip" id="c">frente: -</span><span class="chip" id="vis">visao: -</span></div></div>
+
+<div class="card"><div class="lbl">Visao do robo (frame | retroprojecao | mascara)</div>
+<img id="viz" alt="aguardando o celular..." style="width:100%;display:block;image-rendering:pixelated;background:#000;min-height:60px;color:var(--mu)"></div>
 
 <div class="card"><div class="lbl">Sensor (radar)</div><canvas id="rad" width="400" height="220"></canvas></div>
 
@@ -60,7 +67,9 @@ function conn(){
   ws=new WebSocket('ws://'+(location.hostname||'192.168.4.1')+':81/');
   ws.onopen=()=>{$('dot').style.background='var(--ok)';addLog('conectado');};
   ws.onclose=()=>{$('dot').style.background='var(--er)';setTimeout(conn,1000);};
-  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch(_){return}handle(m);};
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch(_){return}
+    if(rec){m.ts=Date.now();LOG.push(m);if(LOG.length>LOG_MAX)LOG.shift();}
+    handle(m);};
 }
 function addLog(s,color){
   const d=document.createElement('div');
@@ -70,7 +79,8 @@ function addLog(s,color){
 }
 function bar(el,v){v=Math.max(-1,Math.min(1,v));el.style.left=(v>=0?50:50+v*50)+'%';el.style.width=Math.abs(v)*50+'%';
   el.style.background=v<0?'var(--wa)':'var(--ac)';}
-let lastWhy='';
+let lastWhy='',vizUrl='',rec=false,LOG=[];
+const LOG_MAX=60000;
 function handle(m){
   if(m.t==='state'){
     const a=m.armed;$('armed').textContent=a?'ARMADO':'desarmado';$('armed').style.background=a?'var(--ok)':'#2d333b';
@@ -83,6 +93,7 @@ function handle(m){
   }else if(m.t==='range'){
     pts[Math.round(m.deg/5)*5]={cm:m.cm,t:Date.now()};
   }else if(m.t==='think'){
+    if(m.viz&&m.viz!==vizUrl){vizUrl=m.viz;$('viz').src=m.viz+'?'+Date.now();}
     if(m.state)$('vis').textContent='visao: '+m.state+(m.conf!=null?' ('+Math.round(m.conf*100)+'%)':'');
     if(m.msg)addLog('[cerebro] '+m.msg);
   }else if(m.t==='goal'){
@@ -104,5 +115,12 @@ function draw(){
 document.querySelectorAll('[data-g]').forEach(b=>b.onclick=()=>send({t:'goal',g:b.dataset.g}));
 document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>send({t:'mode',m:b.dataset.m}));
 $('stop').onclick=()=>{send({t:'arm',on:false});send({t:'goal',g:'parar'});};
+$('viz').onerror=()=>{if(vizUrl)setTimeout(()=>{$('viz').src=vizUrl+'?'+Date.now();},2000);};
+$('rec').onclick=()=>{rec=!rec;$('rec').classList.toggle('on',rec);$('rec').textContent=rec?'Gravando...':'Gravar log';};
+$('dl').onclick=()=>{if(!LOG.length)return;
+  const b=new Blob([LOG.map(o=>JSON.stringify(o)).join('\n')+'\n'],{type:'application/x-ndjson'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);
+  a.download='carrinho_'+new Date().toISOString().replace(/[:.]/g,'-')+'.jsonl';a.click();};
+setInterval(()=>{$('dl').textContent='Baixar log ('+LOG.length+')';},1000);
 conn();draw();
 </script></body></html>)rawliteral";
