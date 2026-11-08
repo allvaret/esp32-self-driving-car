@@ -49,14 +49,15 @@ Vision alone does not solve the wall of similar color; the range sensor does, an
 ## Architecture
 
 ```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 40, "rankSpacing": 110}}}%%
 flowchart LR
     CAM["Phone camera<br/>CameraX, 640x360"] --> G["vision/ground.py<br/>H-S histogram + back-projection<br/>= floor mask"]
     CAM --> E["vision/edge_probe.py<br/>long horizontal edges"]
     G --> D["vision/decision.py<br/>r = p / ref<br/>FREE / UNCERTAIN / OBSTACLE"]
     D --> C["control/controller.py<br/>CRUISE / SCAN / AVOID"]
     E --> C
-    C -- "drive, aim (JSON, WebSocket)" --> F["ESP32 firmware<br/>watchdog, hard stop 20 cm"]
-    F -- "range, telemetry" --> C
+    C -- "drive / aim<br/>JSON over WebSocket" --> F["ESP32 firmware<br/>watchdog, hard stop 20 cm"]
+    F -- "range /<br/>telemetry" --> C
     F --> M["L298N + DC motors"]
     S["HC-SR04 on a servo"] --> F
 ```
@@ -146,4 +147,4 @@ assets/         sofa video, logs and labels
 
 ## Contact
 
-Álvaro Danko · [alvarodanko032@gmail.com](mailto:alvarodanko032@gmail.com) · [LinkedIn](https://www.linkedin.com/in/alvaro-danko/) · [GitHub](https://github.com/allvaret)
+Alvaro Danko · [alvarodanko032@gmail.com](mailto:alvarodanko032@gmail.com) · [LinkedIn](https://www.linkedin.com/in/alvaro-danko/) · [GitHub](https://github.com/allvaret)

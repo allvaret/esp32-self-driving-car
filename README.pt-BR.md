@@ -49,14 +49,15 @@ A visão sozinha não resolve a parede de cor parecida; o sensor de distância r
 ## Arquitetura
 
 ```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 40, "rankSpacing": 110}}}%%
 flowchart LR
     CAM["Câmera do celular<br/>CameraX, 640x360"] --> G["vision/ground.py<br/>histograma H-S + retroprojeção<br/>= máscara do chão"]
     CAM --> E["vision/edge_probe.py<br/>bordas horizontais longas"]
     G --> D["vision/decision.py<br/>r = p / ref<br/>LIVRE / INCERTO / OBSTÁCULO"]
     D --> C["control/controller.py<br/>CRUISE / SCAN / AVOID"]
     E --> C
-    C -- "drive, aim (JSON, WebSocket)" --> F["Firmware do ESP32<br/>watchdog, parada a 20 cm"]
-    F -- "distância, telemetria" --> C
+    C -- "drive / aim<br/>JSON via WebSocket" --> F["Firmware do ESP32<br/>watchdog, parada a 20 cm"]
+    F -- "distância /<br/>telemetria" --> C
     F --> M["L298N + motores DC"]
     S["HC-SR04 em um servo"] --> F
 ```
@@ -146,4 +147,4 @@ assets/         vídeo do sofá, logs e rótulos
 
 ## Contato
 
-Álvaro Danko · [alvarodanko032@gmail.com](mailto:alvarodanko032@gmail.com) · [LinkedIn](https://www.linkedin.com/in/alvaro-danko/) · [GitHub](https://github.com/allvaret)
+Alvaro Danko · [alvarodanko032@gmail.com](mailto:alvarodanko032@gmail.com) · [LinkedIn](https://www.linkedin.com/in/alvaro-danko/) · [GitHub](https://github.com/allvaret)
