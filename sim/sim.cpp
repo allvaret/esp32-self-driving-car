@@ -1,7 +1,7 @@
 // Simulador host do car_firmware.ino: relogio virtual, sensor HC-SR04 simulado, serial por script.
 #include "Arduino.h"
 #if __has_include("../car_firmware/car_firmware.ino")
-#include "../car_firmware/car_firmware.ino"   // layout esp32/sim + esp32/car_firmware
+#include "../car_firmware/car_firmware.ino"   // layout sim/ + car_firmware/
 #elif __has_include("car_firmware.ino")
 #include "car_firmware.ino"                    // arquivos soltos na mesma pasta
 #else

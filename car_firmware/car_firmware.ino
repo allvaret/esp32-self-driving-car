@@ -16,8 +16,8 @@
  *            {"t":"avoid"} -> ESP32 faz o desvio (para, olha L/R com o servo, re, curva) e devolve
  *            o controle ao celular quando termina. re continua no maximo max_rev_ms.
  *   - partida dos motores escalonada (um de cada vez) e nunca junto com o servo se movendo.
- * Fiacao, comandos e testes de bancada: esp32/README_FIRMWARE.md
- * Valores [DEMO]: calibrar (ver docs/PARAMETROS_A_CALIBRAR.md). Mantenha coerente com config.py.
+ * Fiacao, comandos e testes de bancada: docs/protocolo_ws.md
+ * Valores [DEMO]: calibrar (ver docs/parametros_a_calibrar.md). Mantenha coerente com config.py.
  */
 #include <Arduino.h>
 #if __has_include("esp_arduino_version.h")

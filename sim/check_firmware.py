@@ -1,7 +1,7 @@
 """check_firmware.py - cenarios de verificacao do car_firmware.ino no simulador (sem hardware).
 
-Compile antes (ver esp32/README_FIRMWARE.md):
-    cd esp32/sim && g++ -std=c++17 -DESP_ARDUINO_VERSION_MAJOR=3 -I. -o sim3 sim.cpp
+Compile antes:
+    cd sim && g++ -std=c++17 -DESP_ARDUINO_VERSION_MAJOR=3 -I. -o sim3 sim.cpp
 Rode:  python check_firmware.py        (sai com codigo 1 se algo falhar)
 """
 import json, os, subprocess, sys, tempfile

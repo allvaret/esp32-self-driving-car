@@ -1,7 +1,7 @@
 """config.py - parametros do projeto num lugar so (raiz do repositorio).
 
 Todo valor aqui e [DEMO]: foi escolhido por falta de informacao real (carro, sensor,
-S9). A lista completa de o-que-medir-e-como esta em PARAMETROS_A_CALIBRAR.md.
+S9). A lista completa de o-que-medir-e-como esta em docs/parametros_a_calibrar.md.
 
 Use:
     cfg = Config.load("config.json")       # ou Config() para os padroes
