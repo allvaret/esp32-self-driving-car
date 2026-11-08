@@ -1,6 +1,6 @@
 // net.h - softAP + pagina web (porta 80) + WebSocket (porta 81)            car_firmware 0.2
 //
-// Rede:  o ESP32 cria a rede "CARRINHO" (senha carrinho142), IP fixo 192.168.4.1.
+// Rede:  o ESP32 cria a rede "CARRINHO" (senha em secrets.h), IP fixo 192.168.4.1.
 // Quem conecta:
 //   - celular VISOR  : abre http://192.168.4.1 no navegador (pagina em web_ui.h). Sem app.
 //   - celular CEREBRO: S9 (Python) conecta em ws://192.168.4.1:81 e manda drive/aim/think.
@@ -15,7 +15,13 @@
 #include "web_ui.h"
 
 #define AP_SSID "CARRINHO"
-#define AP_PASS "carrinho142"   // minimo 8 caracteres
+// Senha do AP: crie car_firmware/secrets.h (copie de secrets.example.h; fica fora do git).
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#ifndef AP_PASS
+#define AP_PASS "troque-esta-senha"   // padrao publico: defina a sua em secrets.h (minimo 8 caracteres)
+#endif
 #define WS_PORT 81
 
 static WebServer http(80);

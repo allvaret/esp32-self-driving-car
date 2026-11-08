@@ -1,7 +1,7 @@
 # Protocolo celular <-> ESP32 (firmware 0.2)
 
 ## Rede
-- ESP32 em softAP: SSID `CARRINHO`, senha `carrinho142`, IP `192.168.4.1`.
+- ESP32 em softAP: SSID `CARRINHO`, senha definida em `car_firmware/secrets.h` (modelo: `secrets.example.h`; sem ele vale `troque-esta-senha`), IP `192.168.4.1`.
 - `http://192.168.4.1` -> pagina do visor (pensamento + motivacao). Funciona em qualquer navegador.
 - `ws://192.168.4.1:81/` -> WebSocket. Uma mensagem JSON por frame, mesmo formato da serial.
 - Android: ao conectar no CARRINHO, aceitar "rede sem internet / manter conectado".
