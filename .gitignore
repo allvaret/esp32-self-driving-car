@@ -4,3 +4,13 @@ venv*/
 __pycache__/
 
 esp32anotation/
+# gerado pelo Gradle (task syncPython copia os .py da raiz)
+android/app/src/main/python/
+
+# IDE / binarios / rascunhos locais
+.vscode/
+*.exe
+sim/sim3
+
+# segredos locais do firmware
+car_firmware/secrets.h
