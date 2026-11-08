@@ -18,7 +18,7 @@ Colunas do CSV:
   str_cen : forca media do gradiente nas bordas achadas no centro (NaN se nao achou)
 
 Uso:
-    python edge_probe.py videoParede.mp4 --out edge_parede --mark 6.4 \
+    python edge_probe.py 10sec_reframed10.mp4 --out edge_parede --mark 6.4 \
         --seg chao:0.0:2.8 --seg parede2:9.2:13.4 --snap 5.0 --snap 12.0
 --mark: linha vertical no grafico. --seg nome:t0:t1: media das colunas no intervalo.
 --canny LO,HI: limiares fixos do Canny (baixe para bordas de baixo contraste).

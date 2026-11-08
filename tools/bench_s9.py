@@ -5,9 +5,9 @@ os numeros. Pipeline por frame: ground (mascara + retroprojecao + features) -> d
 -> bordas -> controller com sensor MOCK. A decodificacao do video e medida a parte.
 
 Uso (da raiz do repositorio):
-    python -m tools.bench_s9 videoParede.mp4
-    python -m tools.bench_s9 videoParede.mp4 --max-frames 120 --no-edges --json bench_pc.json
-    python -m tools.bench_s9 videoParede.mp4 --threads 1      # limita threads do OpenCV
+    python -m tools.bench_s9 10sec_reframed10.mp4
+    python -m tools.bench_s9 10sec_reframed10.mp4 --max-frames 120 --no-edges --json bench_pc.json
+    python -m tools.bench_s9 10sec_reframed10.mp4 --threads 1      # limita threads do OpenCV
     python -m tools.bench_s9 pasta_de_frames/ --fps 10        # modo imagens (jpg/png)
 No app Chaquopy:  tools.bench_s9.bench_text("/caminho/video.mp4")  -> str
 

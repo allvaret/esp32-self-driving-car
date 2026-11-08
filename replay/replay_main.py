@@ -1,4 +1,4 @@
-"""notebooks/replay_main.py - esqueleto do main em tempo real, alimentado por VIDEO + sensor MOCK.
+"""replay/replay_main.py - esqueleto do main em tempo real, alimentado por VIDEO + sensor MOCK.
 
 Por frame:  frame -> ground (mascara/prob) -> decision.py (estado da visao)
                   -> edge_probe (borda proxima?)  -> controller (fusao + FSM)
@@ -9,9 +9,9 @@ muda o que a camera ve) e o cenario do sensor e indexado pelo tempo. Serve para
 validar a logica e o timing das decisoes, nao o comportamento em malha fechada.
 
 Uso (da raiz do repositorio):
-    python -m notebooks.replay_main videoParede.mp4 --scenario scenario_parede_exemplo.csv --out run_parede
-    python -m notebooks.replay_main videoParede.mp4 --scenario sc.csv --canny 8,24 --fault none:16.2:18.8
-    python -m notebooks.replay_main sofa.mp4 --no-edges --max-range 2.0 --noise 0.02 --dropout 0.05
+    python -m replay.replay_main assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4 --out run_sofa
+    python -m replay.replay_main <video.mp4> --scenario <cenario.csv> --canny 8,24 --fault none:16.2:18.8
+    python -m replay.replay_main <video.mp4> --no-edges --max-range 2.0 --noise 0.02 --dropout 0.05
 --fault modo:t0:t1 (repetivel): modo none (sem eco, ex. sol) | far (devolve alcance maximo, ex. perna fina)
 Gera <out>.csv, <out>.png e imprime as transicoes do controller.
 """

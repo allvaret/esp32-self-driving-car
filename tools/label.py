@@ -1,37 +1,49 @@
-import cv2 as cv
-import pandas as pd
+"""label.py - rotulagem manual: mostra o video frame a frame e grava a tecla pressionada.
+
+Teclas: a = esquerda, d = direita, s = parar, w = frente, q = sair.
+Grava (frame, tecla) em label_<video>.csv ao lado do video (modo append).
+
+Uso:
+    python -m tools.label assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4 [--delay 2000]
+"""
+import argparse
 from pathlib import Path
 
-input_path = '/assets/simulation_Scar/Reframed_videos/24sec_reframed10.mp4'
-path_obj = Path(input_path)
-output_name = f"label_{path_obj.stem}.csv"
+import cv2 as cv
+import pandas as pd
+
+KEYS = {ord("a"): "esquerda", ord("d"): "direita", ord("s"): "parar", ord("w"): "frente"}
 
 
-cap = cv.VideoCapture(input_path)
-counter = 0
-while cap.isOpened():
-    ret, frame = cap.read()
-    counter += 1
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("video")
+    ap.add_argument("--delay", type=int, default=2000, help="ms de espera por frame")
+    a = ap.parse_args()
 
-    # if frame is read correctly ret is True
-    if not ret:
-        print("Can't receive frame (stream end?). Exiting ...")
-        break
-    colored = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+    src = Path(a.video)
+    csv_path = src.with_name(f"label_{src.stem}.csv")
+    cap = cv.VideoCapture(str(src))
+    if not cap.isOpened():
+        raise SystemExit(f"Nao consegui abrir {src}")
 
-    espera = cv.waitKey(2000)
-    cv.imshow('frame', colored)
-    if espera == ord('q'):
-        break
-    keys = [ord('a'), # Esquerda
-             ord('d'), # Direita
-             ord('s'), # Parar 
-             ord('w')] # Frente
-    
-    if espera in keys:
-        print(f'Frame {counter} - Key pressed: {espera}')
-        pd.DataFrame({'frame': [counter], 'key': [espera]}).to_csv(f'assets\\simulation_Scar\\Reframed_videos\\{output_name}', mode='a', header=False, index=False)
-        
+    counter = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        counter += 1
+        if not ret:
+            print("Fim do video.")
+            break
+        cv.imshow("frame", frame)
+        key = cv.waitKey(a.delay)
+        if key == ord("q"):
+            break
+        if key in KEYS:
+            print(f"Frame {counter} - {KEYS[key]} ({key})")
+            pd.DataFrame({"frame": [counter], "key": [key]}).to_csv(csv_path, mode="a", header=False, index=False)
+    cap.release()
+    cv.destroyAllWindows()
 
-cap.release()
-cv.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()

@@ -1,8 +1,8 @@
-"""notebooks/replay_decision.py - reproduz vision/decision.py sobre um coverage.csv (sem video).
+"""replay/replay_decision.py - reproduz vision/decision.py sobre um coverage.csv (sem video).
 
 Uso (da raiz do repositorio):
-    python -m notebooks.replay_decision coverage_sofa.csv
-    python -m notebooks.replay_decision coverage_corredor.csv --out dec_corredor --config config.json
+    python -m replay.replay_decision coverage_sofa.csv
+    python -m replay.replay_decision coverage_corredor.csv --out dec_corredor --config config.json
 Gera <out>.csv (estado por frame), <out>.png e imprime as transicoes.
 """
 import argparse

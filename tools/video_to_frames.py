@@ -2,8 +2,8 @@
 
 Serve para (1) levar frames ao app Android quando o OpenCV de la nao le video, e
 (2) simular a camera do carro (imagens soltas). Rode no PC, da raiz do repositorio:
-    python -m tools.video_to_frames videoParede.mp4 android/app/src/main/assets/frames
-    python -m tools.video_to_frames videoParede.mp4 out_frames --max-frames 120 --quality 90
+    python -m tools.video_to_frames 10sec_reframed10.mp4 android/app/src/main/assets/frames
+    python -m tools.video_to_frames 10sec_reframed10.mp4 out_frames --max-frames 120 --quality 90
 Os arquivos saem como frame_0000.jpg, frame_0001.jpg, ... (ordem alfabetica = ordem do video).
 """
 import argparse

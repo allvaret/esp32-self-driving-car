@@ -11,7 +11,7 @@ faixas da parte inferior do frame, tres sinais:
 Faixas: 'inf' = ultimas linhas, largura toda; 'cen' = mesmas linhas, terco central.
 
 Uso:
-    python coverage_log.py                       # video padrao do corredor
+    python coverage_log.py                       # video padrao (sofa)
     python coverage_log.py outro.mp4 --thr 0.02 --out cov_outro
     python coverage_log.py outro.mp4 --thr auto --out cov_outro_auto   # thr derivado da ROI
 """
@@ -27,7 +27,7 @@ from vision.ground import preprocess, learn_floor_hist, floor_mask, calibrate_th
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-VIDEO_DEFAULT = str(PROJECT_ROOT / "assets/simulation_Scar/Reframed_videos/12sec_reframed10.mp4")
+VIDEO_DEFAULT = str(PROJECT_ROOT / "assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4")
 
 STRIP_Y0 = 0.75            # faixa = ultimos 25% das linhas
 CEN_X0, CEN_X1 = 1 / 3, 2 / 3
