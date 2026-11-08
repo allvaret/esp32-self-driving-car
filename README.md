@@ -29,6 +29,8 @@ The work is split across three layers that communicate through narrow, tested in
 | **Link** | Wi-Fi (ESP32 soft AP, WebSocket, one JSON message per frame) | commands down, telemetry and logs up |
 | **Body** | ESP32 firmware | motors (L298N), ultrasonic sensor on a servo, watchdog, hard stop |
 
+**Context.** The design was informed by studying how Waymo and Tesla approach perception: a redundant multi-sensor stack on one side, a camera-first stack on the other. This car is a toy-scale take on that trade-off: the camera is the main sensor, and a cheap ultrasonic sensor adds redundancy where the camera is weak. Scale, safety requirements and methods are not comparable.
+
 What I would point to in this project:
 
 - **Vision without training.** Hue-saturation histogram of the floor, back-projection, an automatic threshold from a percentile of the region of interest, and morphology. No dataset, no labels, nothing to retrain when the floor changes.
