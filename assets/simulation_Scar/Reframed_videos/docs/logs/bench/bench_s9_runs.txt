@@ -1,0 +1,246 @@
+R0
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 2
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 161 ms
+etapa             media ms    p95 ms    max ms
+decode                 1.3       2.0       4.4
+ground                10.3      10.6      17.1
+decision               0.0       0.0       0.0
+edges                  8.2       8.6      10.6
+controller             0.1       0.1       0.2
+total_compute         18.6      19.3      25.5
+fps de computacao (1000/media): 53.7
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R1
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 2
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 194 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.6       4.1       5.9
+ground                10.0      10.4      11.9
+decision               0.0       0.0       0.1
+edges                  7.7       8.4       9.0
+controller             0.1       0.1       0.2
+total_compute         17.9      18.8      21.0
+fps de computacao (1000/media): 55.9
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R2
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 2
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 138 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.5       3.8       4.3
+ground                10.1      10.7      17.8
+decision               0.0       0.1       0.1
+edges                  7.7       8.3      13.0
+controller             0.1       0.1       0.2
+total_compute         17.9      19.1      26.6
+fps de computacao (1000/media): 55.9
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R3
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 2
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 153 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.3       3.4       4.0
+ground                10.0      10.4      11.0
+decision               0.0       0.0       0.1
+edges                  7.7       8.1       9.3
+controller             0.1       0.2       0.2
+total_compute         17.8      18.5      19.8
+fps de computacao (1000/media): 56.1
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R0 1TH
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 1
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 181 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.6       3.7       4.1
+ground                 9.9      10.5      10.8
+decision               0.0       0.1       0.1
+edges                  7.8       8.4       9.6
+controller             0.1       0.1       0.2
+total_compute         17.8      18.9      20.1
+fps de computacao (1000/media): 56.1
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R1 1TH
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 1
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 151 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.4       3.7       5.4
+ground                 9.9      10.2      12.5
+decision               0.0       0.1       0.1
+edges                  7.6       8.2       9.3
+controller             0.1       0.1       0.2
+total_compute         17.6      18.2      20.7
+fps de computacao (1000/media): 56.9
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R2 1TH
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 1
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 142 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.3       3.3       4.7
+ground                 9.8      10.3      10.6
+decision               0.0       0.0       0.1
+edges                  7.6       8.3       8.7
+controller             0.1       0.1       0.2
+total_compute         17.6      18.6      19.0
+fps de computacao (1000/media): 57.0
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R3 1TH
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 1
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 137 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.2       3.2       5.3
+ground                 9.9      10.2      10.6
+decision               0.0       0.0       0.0
+edges                  7.5       8.0       8.4
+controller             0.1       0.1       0.1
+total_compute         17.5      18.1      19.1
+fps de computacao (1000/media): 57.0
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R1 2TH
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 2
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 182 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.5       3.5       4.1
+ground                10.0      10.3      10.5
+decision               0.0       0.0       0.1
+edges                  7.6       8.0       9.0
+controller             0.1       0.1       0.2
+total_compute         17.7      18.4      19.2
+fps de computacao (1000/media): 56.5
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R2 2TH
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 2
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 139 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.2       3.3       4.2
+ground                10.0      10.4      14.3
+decision               0.0       0.0       0.0
+edges                  7.6       8.2      11.8
+controller             0.1       0.1       0.2
+total_compute         17.7      18.5      23.2
+fps de computacao (1000/media): 56.5
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R3 2TH
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 2
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 134 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.4       3.7       4.3
+ground                10.0      10.2      10.9
+decision               0.0       0.0       0.1
+edges                  7.7       8.0       8.4
+controller             0.1       0.2       0.2
+total_compute         17.8      18.4      18.9
+fps de computacao (1000/media): 56.1
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R0 th3 
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 3
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 196 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.6       3.5       4.5
+ground                10.1      10.4      12.5
+decision               0.0       0.0       0.8
+edges                  7.7       8.2       9.5
+controller             0.1       0.1       0.2
+total_compute         17.9      18.7      20.2
+fps de computacao (1000/media): 55.8
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R1 
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 3
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 131 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.6       3.8       4.5
+ground                10.0      10.3      11.0
+decision               0.0       0.0       0.0
+edges                  7.7       8.2       9.5
+controller             0.1       0.1       0.1
+total_compute         17.8      18.8      19.5
+fps de computacao (1000/media): 56.1
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R2
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 3
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 143 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.8       4.5       5.9
+ground                10.1      10.5      11.8
+decision               0.0       0.1       0.1
+edges                  7.7       8.3       9.6
+controller             0.1       0.1       0.2
+total_compute         17.9      18.9      20.0
+fps de computacao (1000/media): 55.7
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R3
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 3
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 129 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.6       3.5       5.2
+ground                10.0      10.6      11.6
+decision               0.0       0.0       0.0
+edges                  7.6       8.2       9.0
+controller             0.1       0.1       0.2
+total_compute         17.7      18.7      20.1
+fps de computacao (1000/media): 56.5
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R0 4th
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 4
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 171 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.9       4.4       5.6
+ground                10.2      10.5      10.6
+decision               0.0       0.1       0.1
+edges                  7.9       8.5       9.5
+controller             0.1       0.1       0.2
+total_compute         18.1      18.9      19.7
+fps de computacao (1000/media): 55.1
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R1
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 4
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 133 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.5       3.7       4.7
+ground                10.2      10.7      11.5
+decision               0.0       0.0       0.0
+edges                  7.8       8.3       8.9
+controller             0.1       0.2       0.2
+total_compute         18.1      18.9      19.3
+fps de computacao (1000/media): 55.3
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R2
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 4
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 156 ms
+etapa             media ms    p95 ms    max ms
+decode                 1.3       2.1       2.8
+ground                10.0      10.3      10.7
+decision               0.0       0.0       0.0
+edges                  7.7       8.1       8.7
+controller             0.1       0.1       0.2
+total_compute         17.8      18.3      18.9
+fps de computacao (1000/media): 56.3
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
+
+R3
+python 3.10.22 | numpy 1.26.2 | cv2 4.5.1 | aarch64 | 8 CPUs | cv2 threads 4
+video bench.mp4 848x478 @ 30.0 fps | 106 frames | bordas ligadas | setup 135 ms
+etapa             media ms    p95 ms    max ms
+decode                 2.6       4.1       4.8
+ground                10.1      10.5      10.9
+decision               0.0       0.0       0.1
+edges                  7.8       8.3      10.7
+controller             0.1       0.1       0.1
+total_compute         18.0      18.7      21.4
+fps de computacao (1000/media): 55.7
+orcamento por frame: 33 ms (p95 do total) -> ACOMPANHA o video
