@@ -673,9 +673,9 @@ void setup() {
 }
 
 void loop() {
-  uint32_t now = millis();
-  pollSerial(now);
+  pollSerial(millis());
   netLoop();
+  uint32_t now = millis();   // depois do netLoop: nenhum timestamp (ex.: lastDriveT) fica a frente de `now`
   if (rtcRestores && now > 30000) rtcRestores = 0;       // 30 s sem cair: zera o contador de retomadas
   buttonTask(now);
   sensorTask(now);
