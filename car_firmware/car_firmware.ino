@@ -30,7 +30,7 @@
 #include <esp_system.h>
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.3"
+#define FW_VERSION "car_firmware 0.3.2"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -70,6 +70,8 @@
 #define SERVO_CENTER_US 1500
 #define SERVO_US_PER_DEG 11.0f
 #define SERVO_MAX_DEG 80.0f
+#define SERVO_STEP_DEG 15.0f    // servo do sensor anda em passos (= abertura do feixe do HC-SR04): evita o pico de corrente do salto
+#define SERVO_STEP_MS 40        // intervalo entre passos
 #define CENTER_TOL_DEG 10.0f    // |servo| <= isso conta como "olhando para frente"
 #define MEASURE_PERIOD_MS 65    // HC-SR04: ciclo >= 60 ms
 #define ARM_DELAY_MS 3000
@@ -122,9 +124,10 @@ static int mode = DEFAULT_MODE;
 static bool armed = false, armPending = false;
 static uint32_t armAt = 0;
 
-static float servoDeg = 0;                 // angulo atual do servo do sensor
+static float servoDeg = 0;                 // angulo ALVO do servo do sensor (o que a FSM enxerga)
+static float servoCur = 0;                 // angulo realmente comandado (anda ate o alvo em passos)
 static bool servoInit = false;
-static uint32_t tAim = 0;
+static uint32_t tAim = 0, tServoStep = 0;
 
 struct Meas { bool valid; float cm; float raw; uint32_t t; float angle; };
 static Meas meas = {false, -1, -1, 0, 0};
@@ -232,16 +235,32 @@ static bool jsonBool(const char* s, const char* key, bool* out) {
 }
 
 // ================================ SERVO =====================================
+static void servoWrite(float deg) {
+  servoUs(PIN_SENSOR_SERVO, CH_SENSOR_SERVO,
+          SERVO_CENTER_US + SENSOR_SERVO_SIGN * (deg + P.sensor_trim_deg) * SERVO_US_PER_DEG);
+}
+
 static void aimTo(float deg, uint32_t now) {
   deg = clampf(deg, -SERVO_MAX_DEG, SERVO_MAX_DEG);
   if (servoInit && absf(deg - servoDeg) < 0.01f) return;
+  bool first = !servoInit;                               // 1a vez / reaplicar trim: vai direto, sem rampa
   servoInit = true;
   servoDeg = deg;
-  servoUs(PIN_SENSOR_SERVO, CH_SENSOR_SERVO,
-          SERVO_CENTER_US + SENSOR_SERVO_SIGN * (deg + P.sensor_trim_deg) * SERVO_US_PER_DEG);
+  if (first) { servoCur = deg; servoWrite(deg); }
+  else tServoStep = now - SERVO_STEP_MS;                 // 1o passo ja no proximo servoTick
   tAim = now;
   ringN = 0;
   meas.valid = false;
+}
+
+static void servoTick(uint32_t now) {                    // anda ate o alvo em passos de SERVO_STEP_DEG
+  float d = servoDeg - servoCur;
+  if (absf(d) < 0.01f) return;
+  if (now - tServoStep < (uint32_t)SERVO_STEP_MS) return;
+  tServoStep = now;
+  servoCur = absf(d) <= SERVO_STEP_DEG ? servoDeg : servoCur + (d > 0 ? SERVO_STEP_DEG : -SERVO_STEP_DEG);
+  servoWrite(servoCur);
+  tAim = now;                                            // o "assentamento" conta a partir do ultimo passo
 }
 
 // ================================ SENSOR ====================================
@@ -276,6 +295,7 @@ static void sensorTask(uint32_t now) {
   if (now - tLastPing < MEASURE_PERIOD_MS) return;
   tLastPing = now;
   float raw = pingRawCm();
+  if (absf(servoDeg - servoCur) > 0.01f) return;   // servo ainda andando em passos: descarta
   if (now - tAim < (uint32_t)P.settle_ms) return;  // servo ainda movendo: descarta
   if (ringN < 3) ringBuf[ringN++] = raw;
   else { ringBuf[0] = ringBuf[1]; ringBuf[1] = ringBuf[2]; ringBuf[2] = raw; }
@@ -683,6 +703,7 @@ void loop() {
   uint32_t now = millis();   // depois do netLoop: nenhum timestamp (ex.: lastDriveT) fica a frente de `now`
   if (rtcRestores && now > 30000) rtcRestores = 0;       // 30 s sem cair: zera o contador de retomadas
   buttonTask(now);
+  servoTick(now);
   sensorTask(now);
   float v = 0, s = 0;
   if (armed) {
