@@ -88,7 +88,7 @@ struct Params {
   // guarda de reentrada
   float guard_window_ms = 20000, guard_max = 2, backoff1_ms = 1000, backoff2_ms = 2000, backoff3_ms = 4000;
   // carro (calibrar com a bateria)
-  float trim_left = 0.8f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
+  float trim_left = 0.9f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
   float pwm_min = 130, pwm_max = 150, slew_per_s = 2.0f;   // [DEMO] valores atuais do carro
   float kick_pwm = 200, kick_ms = 0;                         // arrancada desligada
   // reflexo / phone
