@@ -17,12 +17,15 @@ Logica:
     - se o celular cair, o ESP32 segue sozinho no modo sensor (firmware 0.3, fallback_auto)
     - drive a cada frame (o ESP32 para sozinho se nao chegar nada em 500 ms)
     - think so quando o estado muda ou a cada THINK_MIN_S
+Rumo: control/heading.py segura a linha reta com o giroscopio (Kotlin -> on_gyro); ver HeadingConfig.
 v1: "reto" e "explorar" se comportam igual (andar reto ate obstaculo). Parametros abaixo.
 """
 import json
 import threading
 import time
 import viz
+from config import Config
+from control.heading import HeadingHold
 from tools.ws_link import WsLink
 
 # ----------------------------- parametros [DEMO] -----------------------------
@@ -42,6 +45,7 @@ _last_state = None
 _last_think_t = 0.0
 _last_viz_t = 0.0
 _last_avoid_t = 0.0
+_heading = HeadingHold(Config().heading)   # rumo em linha reta (giroscopio do celular)
 
 
 def start(url=URL):
@@ -50,6 +54,7 @@ def start(url=URL):
     with _lock:
         if _link is None:
             _link = WsLink(url).start()
+            _heading.reset()
         if viz is not None:
             viz.start()
     return True
@@ -68,6 +73,13 @@ def stop():
         if viz is not None:
             viz.stop()
         _last_goal = None
+        _heading.reset()
+
+
+def on_gyro(rate_dps):
+    """Kotlin, a cada amostra do giroscopio (~50 Hz): giro em graus/s, > 0 = para a DIREITA.
+    Ja projetado no eixo vertical (independe de como o celular esta montado)."""
+    _heading.feed_rate(float(rate_dps), time.monotonic())
 
 
 _STATES = ("OBSTACULO", "INCERTO", "LIVRE")   # ordem: o mais conservador ganha
@@ -153,7 +165,7 @@ def step(estado, conf=None, msg=None):
             v = V_SLOW
         else:                      # OBSTACULO ou desconhecido: conservador
             v = 0.0
-        s = 0.0
+        s, hinfo = _heading.update(time.monotonic(), v, 0.0)   # corrige o desvio dos motores
         link.drive(v, s)
 
         # obstaculo: o ESP32 faz o desvio (para, olha L/R, re, curva) e devolve o controle
@@ -194,5 +206,8 @@ def status():
     if not link.connected:
         return "brain: sem conexao com o carro (rede CARRINHO? dados moveis desligados?)"
     stt = link.state or {}
+    h = _heading.last
+    rumo = (f" | rumo: giro={h.get('rate', 0):+.0f}\u00b0/s psi={h.get('psi', 0):+.1f}\u00b0 "
+            f"corr={h.get('s_corr', 0):+.2f}" if h.get("on") else f" | rumo: {h.get('why', '-')}")
     return (f"conectado | goal={link.goal} | armado={stt.get('armed')} | "
-            f"frente={stt.get('c')} cm")
+            f"frente={stt.get('c')} cm{rumo}")

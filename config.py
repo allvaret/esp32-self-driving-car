@@ -65,6 +65,24 @@ class DecisionConfig:
 
 
 @dataclass
+class HeadingConfig:
+    """Rumo em linha reta com o giroscopio (control/heading.py). Todos [DEMO]: ver docs."""
+    enabled: bool = True
+    kp_rate: float = 0.005        # steer por (grau/s) de giro. Alto demais -> o carro balanca
+    kh: float = 0.02              # steer por grau de rumo acumulado (e quem cancela o desvio fixo)
+    s_max: float = 0.4            # limite da correcao (nao toma o controle do desvio)
+    psi_max_deg: float = 20.0     # limite do rumo acumulado (anti-windup)
+    v_min: float = 0.05           # so corrige andando para a frente
+    s_eps: float = 0.05           # so corrige quando o comando e "reto"
+    engage_delay_s: float = 0.4   # ignora a arrancada (kick/escalonamento dos motores)
+    stale_s: float = 0.3          # sem amostra do giroscopio por X s -> nao corrige
+    rate_tau_s: float = 0.05      # filtro do giro
+    max_dt_s: float = 0.1         # amostra atrasada nao integra mais que isso
+    bias_still_s: float = 0.5     # parado ha X s -> estima o vies do giroscopio
+    bias_tau_s: float = 1.0
+
+
+@dataclass
 class CarCalib:
     """Medidas do carro real. None = ainda nao medido."""
     speed_at_v_rev_mps: Optional[float] = None    # m/s medido com v = control.v_rev, em linha reta
@@ -75,6 +93,7 @@ class CarCalib:
 class Config:
     control: ControlConfig = field(default_factory=ControlConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
+    heading: HeadingConfig = field(default_factory=HeadingConfig)
     calib: CarCalib = field(default_factory=CarCalib)
 
     def validate(self):
@@ -94,12 +113,19 @@ class Config:
         for n in ("ref_s", "enter_obst_s", "exit_obst_s", "enter_livre_s", "timeout_s"):
             if getattr(d, n) < 0:
                 raise ValueError(f"decision.{n} nao pode ser negativo")
+        h = self.heading
+        if not 0 <= h.s_max <= 1 or min(h.kp_rate, h.kh) < 0:
+            raise ValueError("heading: s_max em [0, 1] e ganhos >= 0")
+        for n in ("engage_delay_s", "stale_s", "rate_tau_s", "max_dt_s", "bias_still_s", "bias_tau_s"):
+            if getattr(h, n) <= 0:
+                raise ValueError(f"heading.{n} deve ser > 0")
         return self
 
     # ---- JSON ----
     @classmethod
     def from_dict(cls, data):
-        sections = {"control": ControlConfig, "decision": DecisionConfig, "calib": CarCalib}
+        sections = {"control": ControlConfig, "decision": DecisionConfig,
+                    "heading": HeadingConfig, "calib": CarCalib}
         extra = set(data) - set(sections)
         if extra:
             raise ValueError(f"secoes desconhecidas: {sorted(extra)}")

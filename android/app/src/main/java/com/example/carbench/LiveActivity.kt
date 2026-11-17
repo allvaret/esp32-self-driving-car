@@ -32,6 +32,7 @@ class LiveActivity : ComponentActivity() {
     private var stream: PyObject? = null
     private var buf: ByteArray? = null
     @Volatile private var wantCal = false
+    private lateinit var yaw: YawSensor
     private var lastNs = 0L
     private var fps = 0.0
 
@@ -49,6 +50,7 @@ class LiveActivity : ComponentActivity() {
         txtState = findViewById(R.id.txtState)
         txtInfo = findViewById(R.id.txtInfo)
         findViewById<Button>(R.id.btnCal).setOnClickListener { wantCal = true }
+        yaw = YawSensor(this)
         if (!Python.isStarted()) Python.start(AndroidPlatform(this))
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -135,7 +137,7 @@ class LiveActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    override fun onResume() { super.onResume(); BrainBridge.start(); BrainBridge.resumeStatus() }
+    override fun onResume() { super.onResume(); BrainBridge.start(); BrainBridge.resumeStatus(); yaw.start() }
 
-    override fun onPause()  { BrainBridge.pauseStatus(); BrainBridge.stop(); super.onPause() }
+    override fun onPause()  { yaw.stop(); BrainBridge.pauseStatus(); BrainBridge.stop(); super.onPause() }
 }

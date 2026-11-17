@@ -123,3 +123,15 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 - `ground.py` e `edge_probe.py`: constantes fora do `Config`.
 - `MockRangeHead`: valores padrão (`settle_s`, `max_range_m`, `noise_m`) devem vir da bancada.
 - Detecção de obstáculo móvel pela taxa de variação da leitura: não implementada.
+## Rumo em linha reta (`heading.*`, `control/heading.py`)
+
+| Parâmetro | Padrão | Status | Como calibrar |
+|---|---|---|---|
+| `heading.kp_rate` | 0,005 | DEMO | Steer por °/s de giro. Se o carro balança de um lado a outro em reta, diminua. |
+| `heading.kh` | 0,02 | DEMO | Steer por grau de rumo acumulado; é ele que cancela o desvio fixo. Se demora a endireitar, aumente aos poucos. |
+| `heading.s_max` | 0,4 | DEMO | Teto da correção. Precisa ser maior que o desvio fixo do carro (em unidades de steer). |
+| `heading.engage_delay_s` | 0,4 s | DEMO | Ignora a arrancada (kick + escalonamento dos motores). |
+| `heading.stale_s` | 0,3 s | DEMO | Sem amostra do giroscópio por esse tempo, não corrige. |
+
+Conferir no app antes de rodar: a faixa de status mostra `rumo: giro=... psi=...`. Girar o carro
+à mão para a DIREITA tem que dar giro positivo; se der negativo, inverta o sinal em `YawSensor.kt`.
