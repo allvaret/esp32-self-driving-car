@@ -113,7 +113,7 @@ def plot(rows, png_path, ccfg):
     t = np.array([r["t"] for r in rows])
     f = lambda k: np.array([np.nan if r[k] is None else float(r[k]) for r in rows])
     cmap_v = {"LIVRE": "#2ca02c", "INCERTO": "#ffbf00", "OBSTACULO": "#d62728"}
-    cmap_c = {"CRUISE": "#2ca02c", "SCAN": "#ffbf00", "AVOID": "#d62728"}
+    cmap_c = {"FRENTE": "#2ca02c", "VARREDURA": "#ffbf00", "DESVIO": "#d62728"}
     dt = np.median(np.diff(t)) if len(t) > 1 else 0.1
 
     fig, axs = plt.subplots(5, 1, figsize=(10, 11), sharex=True,

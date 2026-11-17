@@ -31,9 +31,9 @@ def test_sensor_scenario_drives_the_controller():
     sc = Scenario([0, 2.0, 2.1, 100], [2.0, 2.0, 0.3, 0.3], [2.0] * 4, [0.4] * 4)
     rows = run_source(_frames_dir(), scenario=sc, use_edges=False, fps=10)
     states = [r["ctrl_state"] for r in rows]
-    assert "AVOID" in states and rows[0]["ctrl_state"] == "WARMUP"
-    txt = summarize(rows); assert "AVOID" in txt
-    print("ok  cenario com obstaculo a 2 s leva o controller a AVOID")
+    assert "DESVIO" in states and rows[0]["ctrl_state"] == "WARMUP"
+    txt = summarize(rows); assert "DESVIO" in txt
+    print("ok  cenario com obstaculo a 2 s leva o controller a DESVIO")
 
 
 def test_frame_from_rgba_with_row_padding():

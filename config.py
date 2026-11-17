@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 @dataclass
 class ControlConfig:
     # --- distancias do sensor (m) ---
-    d_stop_m: float = 0.50        # sensor central mais perto -> AVOID. Derivar: v*(latencia)+frenagem+margem
+    d_stop_m: float = 0.50        # sensor central mais perto -> DESVIO. Derivar: v*(latencia)+frenagem+margem
     d_clear_m: float = 1.00       # leitura valida mais longe "refuta" a visao
     none_score_m: float = 0.50    # valor de um lado SEM eco ao escolher a curva (> perto, < livre)
     # --- velocidades normalizadas [0, 1] ---
@@ -34,12 +34,12 @@ class ControlConfig:
     stop_s: float = 0.3
     reverse_s: float = 0.8        # idealmente derivado de reverse_m (ver derive_maneuver_times)
     turn_s: float = 1.0           # idealmente derivado de turn_deg ~ scan_deg
-    avoid_retries: int = 2        # re maior + nova olhada antes de desistir (HOLD)
+    avoid_retries: int = 2        # re maior + nova olhada antes de desistir (PRESO)
     # --- histerese (s) ---
-    clear_s: float = 0.2          # tempo "limpo" p/ voltar a CRUISE / sair de HOLD (antes: 3 ticks @10 fps)
+    clear_s: float = 0.2          # tempo "limpo" p/ voltar a FRENTE / sair de PRESO (antes: 3 ticks @10 fps)
     # --- guarda de reentrada (pessoa/obstaculo que volta) ---
     guard_window_s: float = 20.0
-    guard_max_episodes: int = 2   # a partir do (N+1)-esimo AVOID na janela, espera em vez de manobrar
+    guard_max_episodes: int = 2   # a partir do (N+1)-esimo DESVIO na janela, espera em vez de manobrar
     guard_backoff_s: Tuple[float, ...] = (1.0, 2.0, 4.0)   # sobe a cada reentrada; reseta apos a janela
     # --- bordas (hipoteses, nao validadas) ---
     edge_near_h: float = 0.20     # h_cen <= isso (borda perto) ...

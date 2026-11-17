@@ -41,48 +41,48 @@ def scn_obstacle(t_close=3.0, left=2.0, right=0.3):
 # ------------------------------------------------------------- fusao / FSM ---
 def test_cruise_all_clear():
     log = run(Scenario.constant(), lambda t: Vision(V.LIVRE), T=5)
-    assert all(i["ctrl_state"] == "CRUISE" for _, i in log); print("ok  cruise limpo")
+    assert all(i["ctrl_state"] == "FRENTE" for _, i in log); print("ok  cruise limpo")
 
 
 def test_sensor_stops_even_if_vision_says_livre():
     log = run(scn_obstacle(), lambda t: Vision(V.LIVRE), T=6)
-    t_av = next(t for t, i in log if i["ctrl_state"] == "AVOID")
+    t_av = next(t for t, i in log if i["ctrl_state"] == "DESVIO")
     assert 3.0 <= t_av <= 3.3, t_av; print(f"ok  sensor para com visao LIVRE (t={t_av:.1f}s)")
 
 
 def test_picks_freer_side():
     for left, right, want in ((2.0, 0.3, -1.0), (0.3, 2.0, +1.0)):
         log = run(scn_obstacle(left=left, right=right), lambda t: Vision(V.LIVRE), T=9)
-        steer = [i["steer"] for _, i in log if i["sub"] == "TURN" and i["v"] > 0]
+        steer = [i["steer"] for _, i in log if i["sub"] == "CURVA" and i["v"] > 0]
         assert steer and all(s == want for s in steer), steer
     print("ok  escolhe o lado mais livre (esq e dir)")
 
 
 def test_vision_obstacle_refuted_by_sensor():
     log = run(Scenario.constant(center=1.5), lambda t: Vision(V.OBSTACULO), T=4)
-    assert not has(log, "AVOID") and has(log, "SCAN"); print("ok  OBSTACULO refutado -> segue devagar")
+    assert not has(log, "DESVIO") and has(log, "VARREDURA"); print("ok  OBSTACULO refutado -> segue devagar")
 
 
 def test_vision_obstacle_sensor_no_echo():
     log = run(Scenario.constant(), lambda t: Vision(V.OBSTACULO), T=2, max_range_m=2.0)
-    assert has(log, "AVOID"); print("ok  OBSTACULO sem eco -> AVOID")
+    assert has(log, "DESVIO"); print("ok  OBSTACULO sem eco -> DESVIO")
 
 
 def test_edge_near_escalates_to_scan_only():
     log = run(Scenario.constant(), lambda t: Vision(V.LIVRE, edge_near=(1.0 <= t < 2.0)), T=4)
-    assert has(log, "SCAN") and not has(log, "AVOID"); print("ok  borda proxima escala a SCAN (nao a AVOID)")
+    assert has(log, "VARREDURA") and not has(log, "DESVIO"); print("ok  borda proxima escala a VARREDURA (nao a DESVIO)")
 
 
 def test_thin_leg_fault_is_a_known_miss():
     log = run(Scenario.constant(center=0.3), lambda t: Vision(V.LIVRE), T=3, faults=[(0, 3, "far")])
-    assert not has(log, "AVOID"); print("ok  [limitacao] sensor 'far' + visao LIVRE nao freia (perna fina)")
+    assert not has(log, "DESVIO"); print("ok  [limitacao] sensor 'far' + visao LIVRE nao freia (perna fina)")
 
 
 def test_boxed_in_goes_hold_and_releases():
     scn = Scenario([0, 3, 3.1, 14, 14.1, 100], [3, 3, .3, .3, 3, 3], [.3] * 6, [.3] * 6)
     log = run(scn, lambda t: Vision(V.LIVRE), T=20)
-    assert has(log, "AVOID", "HOLD") and log[-1][1]["ctrl_state"] in ("SCAN", "CRUISE")
-    print("ok  sem saida -> HOLD -> libera")
+    assert has(log, "DESVIO", "PRESO") and log[-1][1]["ctrl_state"] in ("VARREDURA", "FRENTE")
+    print("ok  sem saida -> PRESO -> libera")
 
 
 # ------------------------------------------------- segundos, nao ticks (fps) ---
@@ -91,9 +91,9 @@ def test_time_based_hysteresis_is_fps_independent():
     back = []
     for dt in (0.05, 0.1, 0.2):
         log = run(Scenario.constant(), vis, T=4, dt=dt)
-        back.append(next(t for t, i in log if t > 1.5 and i["ctrl_state"] == "CRUISE"))
+        back.append(next(t for t, i in log if t > 1.5 and i["ctrl_state"] == "FRENTE"))
     assert max(back) - min(back) < 1e-6, back
-    print("ok  volta a CRUISE no mesmo instante com dt = 0.05/0.1/0.2 :", back)
+    print("ok  volta a FRENTE no mesmo instante com dt = 0.05/0.1/0.2 :", back)
 
 
 # ------------------------------------------------ guarda de reentrada/backoff ---
@@ -101,21 +101,21 @@ def test_reentry_guard_backoff_sequence():
     scn = Scenario.constant(center=0.3, left=2.0, right=0.3)     # obstaculo que nunca sai
     log = run(scn, lambda t: Vision(V.LIVRE), T=60)
     seq = states(log)
-    waits = [(t, next((t2 for t2, *_ in seq if t2 > t), log[-1][0] + 0.1)) for t, cs, sub in seq if sub == "WAIT"]
+    waits = [(t, next((t2 for t2, *_ in seq if t2 > t), log[-1][0] + 0.1)) for t, cs, sub in seq if sub == "ESPERA"]
     durs = [round(b - a, 2) for a, b in waits]
     assert len(durs) >= 3 and abs(durs[0] - 1.0) < 0.11 and abs(durs[1] - 2.0) < 0.11 \
            and abs(durs[2] - 4.0) < 0.11, durs
-    n_before = sum(1 for t, cs, sub in seq if sub == "STOP" and t < waits[0][0])
-    assert n_before == 2, n_before                               # 2 manobras normais antes do 1o WAIT
+    n_before = sum(1 for t, cs, sub in seq if sub == "PARADA" and t < waits[0][0])
+    assert n_before == 2, n_before                               # 2 manobras normais antes do 1o ESPERA
     print("ok  guarda: 2 manobras, depois esperas de", durs[:4], "s")
 
 
 def test_reentry_guard_resets_after_quiet_window():
     scn = Scenario([0, 4, 4.1, 39.9, 40, 100], [.3, .3, 3, 3, .3, .3], [2.0] * 6, [.3] * 6)
     log = run(scn, lambda t: Vision(V.LIVRE), T=44)
-    late = [(t, i) for t, i in log if t >= 40 and i["ctrl_state"] == "AVOID"]
-    assert late and late[0][1]["sub"] == "STOP" and late[0][1]["guard_level"] == 0
-    print("ok  guarda zera depois de uma janela sem AVOID")
+    late = [(t, i) for t, i in log if t >= 40 and i["ctrl_state"] == "DESVIO"]
+    assert late and late[0][1]["sub"] == "PARADA" and late[0][1]["guard_level"] == 0
+    print("ok  guarda zera depois de uma janela sem DESVIO")
 
 
 # --------------------------------------------------------------- config ---

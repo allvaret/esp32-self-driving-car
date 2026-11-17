@@ -3,7 +3,7 @@
  *
  * DOIS MODOS (troque por `mode auto|phone` na serial ou DEFAULT_MODE abaixo):
  *   auto  : o ESP32 decide sozinho so com o sensor (mesma logica do controller.py, sem visao):
- *           CRUISE -> SCAN (zona intermediaria) -> AVOID (para, olha L/R, re, curva) com
+ *           FRENTE -> VARREDURA (zona intermediaria) -> DESVIO (para, olha L/R, re, curva) com
  *           guarda de reentrada. Serve para a demonstracao SEM celular.
  *   phone : o celular manda {"t":"aim"}, {"t":"drive"}, {"t":"cfg"} (JSON por linha) e o ESP32
  *           devolve {"t":"range","deg":..,"cm":..}. O ESP32 so faz o REFLEXO (parada por
@@ -148,9 +148,9 @@ static uint32_t tRevStart = 0;
 static float lastSteerOut = 999;
 
 // maquina de estados (auto)
-enum { C_CRUISE = 0, C_SCAN = 1, C_AVOID = 2 };
-enum { S_NONE = 0, S_WAIT, S_STOP, S_LOOK_L, S_LOOK_R, S_REVERSE, S_TURN, S_HOLD };
-static int cst = C_CRUISE, sub = S_NONE;
+enum { C_FRENTE = 0, C_VARREDURA = 1, C_DESVIO = 2 };
+enum { S_NONE = 0, S_ESPERA, S_PARADA, S_OLHA_E, S_OLHA_D, S_RE, S_CURVA, S_PRESO };
+static int cst = C_FRENTE, sub = S_NONE;
 static uint32_t tSub = 0, waitUntil = 0, clearSince = 0;
 static bool clearActive = false;
 static float scoreL = 0, scoreR = 0, revMs = 800;
@@ -373,7 +373,7 @@ static void driveApply(uint32_t now, float v, float s) {
 static void goSub(int s, uint32_t now) { sub = s; tSub = now; }
 
 static void resetAuto(uint32_t now) {
-  cst = C_CRUISE; sub = S_NONE; clearActive = false; avoidN = 0; guardLevel = 0; tries = 0;
+  cst = C_FRENTE; sub = S_NONE; clearActive = false; avoidN = 0; guardLevel = 0; tries = 0;
   setWhy("");
   aimTo(0, now);
 }
@@ -384,16 +384,16 @@ static void enterAvoid(uint32_t now, const char* reason) {
     if (now - avoidLog[i] <= (uint32_t)P.guard_window_ms) avoidLog[k++] = avoidLog[i];
   avoidN = k;
   if (avoidN == 0) guardLevel = 0;
-  cst = C_AVOID; tries = 0;
+  cst = C_DESVIO; tries = 0;
   if (avoidN >= (int)P.guard_max) {                      // reentrada: espera com backoff
     float w = guardLevel == 0 ? P.backoff1_ms : (guardLevel == 1 ? P.backoff2_ms : P.backoff3_ms);
     guardLevel++;
     waitUntil = now + (uint32_t)w;
     snprintf(why, sizeof(why), "reentrada: espera %lu ms", (unsigned long)w);
-    goSub(S_WAIT, now);
+    goSub(S_ESPERA, now);
   } else {
     setWhy(reason);
-    goSub(S_STOP, now);
+    goSub(S_PARADA, now);
   }
   if (avoidN >= 8) { for (int i = 1; i < 8; i++) avoidLog[i - 1] = avoidLog[i]; avoidN = 7; }
   avoidLog[avoidN++] = now;
@@ -403,68 +403,68 @@ static void decideSide(uint32_t now) {
   aimTo(0, now);
   if (scoreL < P.d_stop_cm && scoreR < P.d_stop_cm) {    // nenhum lado livre
     tries++;
-    if (tries > (int)P.avoid_retries) { setWhy("sem saida"); clearActive = false; goSub(S_HOLD, now); return; }
+    if (tries > (int)P.avoid_retries) { setWhy("sem saida"); clearActive = false; goSub(S_PRESO, now); return; }
     side = 0; revMs = P.reverse_ms * 1.5f;
   } else {
     side = scoreL >= scoreR ? -1 : +1; revMs = P.reverse_ms;
   }
-  goSub(S_REVERSE, now);
+  goSub(S_RE, now);
 }
 
 static void autoStep(uint32_t now, float* v, float* s) {
   *v = 0; *s = 0;
-  if (cst != C_AVOID) {                                  // ---- CRUISE / SCAN ----
+  if (cst != C_DESVIO) {                                  // ---- FRENTE / VARREDURA ----
     aimTo(0, now);
     if (!haveC) { setWhy("aguardando sensor"); return; }
     float d = centerCm;                                  // -1 = sem eco = livre
     if (d >= 0 && d < P.d_stop_cm) { enterAvoid(now, "sensor perto"); return; }
     bool mid = d >= 0 && d < P.d_clear_cm;
-    if (mid) { cst = C_SCAN; clearActive = false; setWhy("zona intermediaria"); *v = P.v_slow; return; }
-    if (cst == C_SCAN) {
+    if (mid) { cst = C_VARREDURA; clearActive = false; setWhy("zona intermediaria"); *v = P.v_slow; return; }
+    if (cst == C_VARREDURA) {
       if (!clearActive) { clearActive = true; clearSince = now; }
-      if (now - clearSince >= (uint32_t)P.clear_ms) { cst = C_CRUISE; clearActive = false; setWhy(""); *v = P.v_cruise; }
+      if (now - clearSince >= (uint32_t)P.clear_ms) { cst = C_FRENTE; clearActive = false; setWhy(""); *v = P.v_cruise; }
       else *v = P.v_slow;
       return;
     }
     *v = P.v_cruise;
     return;
   }
-  uint32_t el = now - tSub;                              // ---- AVOID ----
+  uint32_t el = now - tSub;                              // ---- DESVIO ----
   switch (sub) {
-    case S_WAIT:
-      if ((int32_t)(now - waitUntil) >= 0) { cst = C_SCAN; sub = S_NONE; clearActive = false; setWhy("fim da espera"); *v = P.v_slow; }
+    case S_ESPERA:
+      if ((int32_t)(now - waitUntil) >= 0) { cst = C_VARREDURA; sub = S_NONE; clearActive = false; setWhy("fim da espera"); *v = P.v_slow; }
       return;
-    case S_STOP:
-      if (el >= (uint32_t)P.stop_ms) { aimTo(-P.scan_deg, now); goSub(S_LOOK_L, now); }
+    case S_PARADA:
+      if (el >= (uint32_t)P.stop_ms) { aimTo(-P.scan_deg, now); goSub(S_OLHA_E, now); }
       return;
-    case S_LOOK_L:
-    case S_LOOK_R: {
+    case S_OLHA_E:
+    case S_OLHA_D: {
       bool got = meas.valid && absf(meas.angle - servoDeg) < 0.5f;
       if (got || el >= (uint32_t)P.look_timeout_ms) {
         float sc = (got && meas.cm >= 0) ? meas.cm : P.none_score_cm;
-        if (sub == S_LOOK_L) { scoreL = sc; aimTo(+P.scan_deg, now); goSub(S_LOOK_R, now); }
+        if (sub == S_OLHA_E) { scoreL = sc; aimTo(+P.scan_deg, now); goSub(S_OLHA_D, now); }
         else { scoreR = sc; decideSide(now); }
       }
       return;
     }
-    case S_REVERSE:
+    case S_RE:
       *v = -P.v_rev;
       if (el >= (uint32_t)revMs) {
-        if (side == 0) { aimTo(-P.scan_deg, now); goSub(S_LOOK_L, now); }
-        else goSub(S_TURN, now);
+        if (side == 0) { aimTo(-P.scan_deg, now); goSub(S_OLHA_E, now); }
+        else goSub(S_CURVA, now);
       }
       return;
-    case S_TURN:
+    case S_CURVA:
       *v = P.v_turn; *s = (float)side;
-      if (el >= (uint32_t)P.turn_ms) { cst = C_SCAN; sub = S_NONE; clearActive = false; setWhy("pos-desvio"); *v = P.v_slow; *s = 0; }
+      if (el >= (uint32_t)P.turn_ms) { cst = C_VARREDURA; sub = S_NONE; clearActive = false; setWhy("pos-desvio"); *v = P.v_slow; *s = 0; }
       return;
-    case S_HOLD: {                                       // preso: sai quando o centro libera
+    case S_PRESO: {                                       // preso: sai quando o centro libera
       aimTo(0, now);
       bool ok = centerCm < 0 || centerCm >= P.d_clear_cm;
       if (!ok) clearActive = false;
       else {
         if (!clearActive) { clearActive = true; clearSince = now; }
-        if (now - clearSince >= (uint32_t)P.clear_ms) { cst = C_SCAN; sub = S_NONE; clearActive = false; setWhy("liberado"); }
+        if (now - clearSince >= (uint32_t)P.clear_ms) { cst = C_VARREDURA; sub = S_NONE; clearActive = false; setWhy("liberado"); }
       }
       return;
     }
@@ -476,15 +476,15 @@ static void phoneStep(uint32_t now, float* v, float* s) {
   bool fresh = now - lastDriveT <= (uint32_t)P.wd_ms;
   if (avoidReq) {                                          // celular pediu desvio
     avoidReq = false;
-    if (!delegated || cst != C_AVOID) {
+    if (!delegated || cst != C_DESVIO) {
       delegated = true;
-      cst = C_CRUISE; sub = S_NONE;
+      cst = C_FRENTE; sub = S_NONE;
       enterAvoid(now, "celular: obstaculo");
       emitf("{\"t\":\"log\",\"msg\":\"ESP32 assumiu: desvio pedido\"}");
     }
   }
   if (delegated) {
-    if (cst == C_AVOID) { autoStep(now, v, s); return; }   // termina a manobra antes de devolver
+    if (cst == C_DESVIO) { autoStep(now, v, s); return; }   // termina a manobra antes de devolver
     if (fresh) {                                           // celular voltou e manobra acabou
       delegated = false;
       aimTo(0, now);
@@ -534,8 +534,8 @@ static void ledTask(uint32_t now) {
 static void printHeartbeat(uint32_t now) {
   if (!HEARTBEAT_MS || now - tHeartbeat < HEARTBEAT_MS) return;
   tHeartbeat = now;
-  static const char* CN[] = {"CRUISE", "SCAN", "AVOID"};
-  static const char* SN[] = {"", "WAIT", "STOP", "LOOK_L", "LOOK_R", "REVERSE", "TURN", "HOLD"};
+  static const char* CN[] = {"FRENTE", "VARREDURA", "DESVIO"};
+  static const char* SN[] = {"", "ESPERA", "PARADA", "OLHA_E", "OLHA_D", "RE", "CURVA", "PRESO"};
   bool fsm = mode == MODE_AUTO || delegated;              // maquina de estados do ESP32 ativa?
   emitf("{\"t\":\"state\",\"mode\":\"%s\",\"armed\":%s,\"esp\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
         "\"L\":%.2f,\"R\":%.2f,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",

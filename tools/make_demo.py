@@ -27,7 +27,7 @@ BG = (24, 24, 28)
 FG = (235, 235, 235)
 COLORS = {"LIVRE": (80, 190, 90), "INCERTO": (60, 180, 235), "OBSTACULO": (70, 70, 225),
           "WARMUP": (150, 150, 150), "-": (150, 150, 150)}      # BGR
-CTRL_COLORS = {"CRUISE": (80, 190, 90), "SCAN": (60, 180, 235), "AVOID": (70, 70, 225), "WARMUP": (150, 150, 150)}
+CTRL_COLORS = {"FRENTE": (80, 190, 90), "VARREDURA": (60, 180, 235), "DESVIO": (70, 70, 225), "WARMUP": (150, 150, 150)}
 
 
 def _txt(img, s, org, scale=0.5, color=FG, thick=1):

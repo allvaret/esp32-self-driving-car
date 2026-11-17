@@ -54,7 +54,7 @@ flowchart LR
     CAM["Câmera do celular<br/>CameraX, 640x360"] --> G["vision/ground.py<br/>histograma H-S + retroprojeção<br/>= máscara do chão"]
     CAM --> E["vision/edge_probe.py<br/>bordas horizontais longas"]
     G --> D["vision/decision.py<br/>r = p / ref<br/>LIVRE / INCERTO / OBSTÁCULO"]
-    D --> C["control/controller.py<br/>CRUISE / SCAN / AVOID"]
+    D --> C["control/controller.py<br/>FRENTE / VARREDURA / DESVIO"]
     E --> C
     C -- "drive / aim<br/>JSON via WebSocket" --> F["Firmware do ESP32<br/>watchdog, parada a 20 cm"]
     F -- "distância /<br/>telemetria" --> C
@@ -72,7 +72,7 @@ Nove decisões, cada uma com o problema, a alternativa descartada e a evidência
 
 **Replay de corridas gravadas** (`python -m replay.replay_main`; sensor de distância simulado a partir de uma linha do tempo escrita à mão, 10 fps). Os logs ficam em [`assets/.../docs/logs/run/`](assets/simulation_Scar/Reframed_videos/docs/logs/run).
 
-| Cenário | Frames | Estados da visão (livre / incerto / obstáculo) | Controlador (cruise / scan / avoid) | O que aconteceu |
+| Cenário | Frames | Estados da visão (livre / incerto / obstáculo) | Controlador (frente / varredura / desvio) | O que aconteceu |
 |---|---|---|---|---|
 | Corredor estreito | 125 | 72 / 53 / 0 | 63 / 62 / 0 | nenhum falso obstáculo; o carro segue andando e varrendo |
 | Espaço aberto, parede de cor parecida | 189 | 99 / 48 / 42 | 43 / 58 / 88 | a sonda de bordas aponta a parede aos 4,1 s, o sensor dispara aos 4,5 s (começa o desvio) e a visão confirma aos 4,7 s |

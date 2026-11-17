@@ -160,7 +160,7 @@ def step(estado, conf=None, msg=None):
         esp = link.state or {}
         now = time.time()
         if (goal in GOALS_MOVE and st == "OBSTACULO" and esp.get("armed")
-                and esp.get("st") != "AVOID" and now - _last_avoid_t >= AVOID_EVERY_S):
+                and esp.get("st") != "DESVIO" and now - _last_avoid_t >= AVOID_EVERY_S):
             _last_avoid_t = now
             link.send({"t": "avoid"})
             link.think("obstaculo na visao: pedindo desvio ao ESP32", state=st)

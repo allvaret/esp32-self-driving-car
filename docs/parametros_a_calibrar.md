@@ -24,7 +24,7 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | `calib.yaw_rate_dps` | `None` | MEDIR | Comandar `steer = 1`, `v = v_turn` por 2 s; medir o ângulo girado (transferidor no chão ou vídeo de cima) e dividir por 2. |
 | `control.v_cruise / v_slow / v_rev / v_turn` | 0,5 / 0,2 / 0,3 / 0,3 | DEMO | Escolher velocidades que o carro realmente consiga manter; anotar a velocidade em m/s de cada uma. |
 | Latência comando → movimento | desconhecida | MEDIR | Filmar o carro e marcar o instante do envio do comando (log no celular) e o início do movimento. |
-| Distância de frenagem de `v_cruise` | desconhecida | MEDIR | Mandar `v = 0` em pleno cruzeiro e medir quanto ele anda até parar. |
+| Distância de frenagem de `v_cruise` | desconhecida | MEDIR | Mandar `v = 0` em plena marcha e medir quanto ele anda até parar. |
 
 ## 2. Sensor HC-SR04 + servo (`control.*`, `hardware/hal.py`)
 
@@ -48,8 +48,8 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | `control.stop_s` | 0,3 s | DEMO | Tempo para o carro parar de fato. Usar a frenagem medida. |
 | `control.reverse_s` | 0,8 s | DEMO | Derivar com `derive_maneuver_times(cfg, reverse_m, turn_deg)` a partir de `speed_at_v_rev_mps`. |
 | `control.turn_s` | 1,0 s | DEMO | Idem, a partir de `yaw_rate_dps` (alvo: girar ≈ `scan_deg`). |
-| `control.avoid_retries` | 2 | DEMO | Quantas vezes tentar de novo (ré maior + nova olhada) antes do HOLD. |
-| `control.clear_s` | 0,2 s | HIPÓTESE | Tempo "limpo" para voltar a CRUISE (equivale a 3 ticks a 10 fps). Revisar com o fps real do S9. |
+| `control.avoid_retries` | 2 | DEMO | Quantas vezes tentar de novo (ré maior + nova olhada) antes do PRESO. |
+| `control.clear_s` | 0,2 s | HIPÓTESE | Tempo "limpo" para voltar a FRENTE (equivale a 3 ticks a 10 fps). Revisar com o fps real do S9. |
 | `control.guard_window_s / guard_max_episodes / guard_backoff_s` | 20 s / 2 / (1, 2, 4) s | DEMO | Testar com uma pessoa atravessando à frente do carro; ajustar para o tempo típico de passagem. |
 | `control.edge_near_h / edge_cov_min` | 0,20 / 0,50 | HIPÓTESE | Só validado no vídeo da parede 1 (rodapé de alto contraste). Parede 2 não detectada. |
 

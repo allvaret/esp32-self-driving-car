@@ -5,7 +5,7 @@ flowchart LR
     CAM["Phone camera<br/>CameraX, 640x360"] --> G["vision/ground.py<br/>H-S histogram + back-projection<br/>= floor mask"]
     CAM --> E["vision/edge_probe.py<br/>long horizontal edges"]
     G --> D["vision/decision.py<br/>r = p / ref<br/>FREE / UNCERTAIN / OBSTACLE"]
-    D --> C["control/controller.py<br/>CRUISE / SCAN / AVOID"]
+    D --> C["control/controller.py<br/>FRENTE / VARREDURA / DESVIO"]
     E --> C
     C -- "drive, aim (JSON, WebSocket)" --> F["ESP32 firmware<br/>watchdog, hard stop 20 cm"]
     F -- "range, telemetry" --> C
@@ -19,7 +19,7 @@ Each frame goes through the same path, on the PC or on the phone:
 2. **Features** (`vision/coverage_log.py`). Per frame: floor fraction and mean floor probability in the lower band (full width and central third), and the fraction of pixels too dark or too bright for hue to be trusted.
 3. **Vision state** (`vision/decision.py`). Mean central probability divided by a reference (the median over the last 0.9 s) gives a relative confidence `r`. Thresholds on `r` with hysteresis and persistence in seconds produce `FREE`, `UNCERTAIN` or `OBSTACLE` (`LIVRE`, `INCERTO`, `OBSTÁCULO` in the code).
 4. **Edge probe** (`vision/edge_probe.py`). Automatic Canny keeps only long, nearly horizontal edges (the wall-floor contact line, i.e. the baseboard) and reports how far up the image the first one sits. It covers walls whose color is close to the floor's, where the color model alone is weak.
-5. **Controller** (`control/controller.py`). A state machine fuses vision with the range sensor. `CRUISE` drives forward; `SCAN` sweeps the sensor left and right; `AVOID` backs up and turns (`STOP`, `LOOK_L`, `LOOK_R`, `REVERSE`, `TURN`, `WAIT`, `HOLD`). The sensor has the final say over vision, and a re-entry guard makes the car pause when it keeps avoiding in a short window (a third `AVOID` within 20 s waits 1 s first).
+5. **Controller** (`control/controller.py`). A state machine fuses vision with the range sensor. `FRENTE` drives forward; `VARREDURA` sweeps the sensor left and right; `DESVIO` backs up and turns (`PARADA`, `OLHA_E`, `OLHA_D`, `RE`, `CURVA`, `ESPERA`, `PRESO`). The sensor has the final say over vision, and a re-entry guard makes the car pause when it keeps avoiding in a short window (a third `DESVIO` within 20 s waits 1 s first).
 6. **Actuation** (`car_firmware/`). The ESP32 receives drive and aim commands, moves the motors and servo, and stops on its own if commands stop arriving or something is closer than 20 cm.
 
 | Layer | Code | Interface |

@@ -54,7 +54,7 @@ flowchart LR
     CAM["Phone camera<br/>CameraX, 640x360"] --> G["vision/ground.py<br/>H-S histogram + back-projection<br/>= floor mask"]
     CAM --> E["vision/edge_probe.py<br/>long horizontal edges"]
     G --> D["vision/decision.py<br/>r = p / ref<br/>FREE / UNCERTAIN / OBSTACLE"]
-    D --> C["control/controller.py<br/>CRUISE / SCAN / AVOID"]
+    D --> C["control/controller.py<br/>FRENTE / VARREDURA / DESVIO"]
     E --> C
     C -- "drive / aim<br/>JSON over WebSocket" --> F["ESP32 firmware<br/>watchdog, hard stop 20 cm"]
     F -- "range /<br/>telemetry" --> C
@@ -72,7 +72,7 @@ Nine decisions, each with the problem, the alternative discarded and the evidenc
 
 **Replay of recorded runs** (`python -m replay.replay_main`; range sensor mocked from a hand-written timeline, 10 fps). Logs are in [`assets/.../docs/logs/run/`](assets/simulation_Scar/Reframed_videos/docs/logs/run).
 
-| Scenario | Frames | Vision states (free / uncertain / obstacle) | Controller (cruise / scan / avoid) | What happened |
+| Scenario | Frames | Vision states (free / uncertain / obstacle) | Controller (frente / varredura / desvio) | What happened |
 |---|---|---|---|---|
 | Narrow corridor | 125 | 72 / 53 / 0 | 63 / 62 / 0 | no false obstacle; the car keeps cruising and scanning |
 | Open space, wall of similar color | 189 | 99 / 48 / 42 | 43 / 58 / 88 | edge probe flags the wall at 4.1 s, the sensor trips at 4.5 s (avoidance starts), vision confirms at 4.7 s |
