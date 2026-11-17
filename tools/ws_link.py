@@ -32,6 +32,7 @@ class WsLink:
         self.state = {}                 # ultimo {"t":"state"}
         self.ranges = {}                # deg -> (cm|None, t)
         self.goal = None                # ultima motivacao
+        self.calib_seq = 0              # +1 a cada {"t":"calibrar"} (botao Explorar do visor)
         self.connected = False
         self._ws = None
         self._run = False
@@ -77,6 +78,8 @@ class WsLink:
             self.ranges[m.get("deg")] = (m.get("cm"), time.time())
         elif t == "goal":
             self.goal = m.get("g")
+        elif t == "calibrar":
+            self.calib_seq += 1
         if self.on_msg:
             self.on_msg(m)
 

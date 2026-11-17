@@ -584,6 +584,8 @@ static void handleJson(const char* line, uint32_t now) {
     netRelay(line);
   } else if (strcmp(t, "think") == 0) {        // pensamento do cerebro -> visores
     netRelay(line);
+  } else if (strcmp(t, "calibrar") == 0) {     // visor (Explorar) -> cerebro reaprende a cor do chao
+    netRelay(line);
   }
 }
 

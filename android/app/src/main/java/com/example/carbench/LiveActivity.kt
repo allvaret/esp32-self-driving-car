@@ -85,7 +85,8 @@ class LiveActivity : ComponentActivity() {
             val s = stream ?: Python.getInstance().getModule("main")
                 .callAttr("StreamRunner", true, File(filesDir, "live_log.csv").absolutePath)
                 .also { stream = it }
-            if (wantCal) { wantCal = false; s.callAttr("recalibrate") }
+            // botao na tela OU comando "calibrar" do visor (Explorar): reaprende o chao
+            if (BrainBridge.popCalibrate() || wantCal) { wantCal = false; s.callAttr("recalibrate") }
 
             val plane = img.planes[0]
             val bb = plane.buffer.also { it.rewind() }

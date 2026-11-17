@@ -117,7 +117,10 @@ function draw(){
     if(!free){g.fillStyle=g.strokeStyle;g.beginPath();g.arc(cx+r*Math.sin(a),cy-r*Math.cos(a),4,0,7);g.fill();}}
   g.globalAlpha=1;g.lineWidth=1;requestAnimationFrame(draw);
 }
-document.querySelectorAll('[data-g]').forEach(b=>b.onclick=()=>send({t:'goal',g:b.dataset.g}));
+document.querySelectorAll('[data-g]').forEach(b=>b.onclick=()=>{
+  if(b.dataset.g==='explorar')send({t:'calibrar'});   // reaprende a cor do chao (carro parado) antes de andar
+  send({t:'goal',g:b.dataset.g});
+});
 document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>send({t:'mode',m:b.dataset.m}));
 $('stop').onclick=()=>{send({t:'arm',on:false});send({t:'goal',g:'parar'});};
 $('viz').onerror=()=>{if(vizUrl)setTimeout(()=>{$('viz').src=vizUrl+'?'+Date.now();},2000);};

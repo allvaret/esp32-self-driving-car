@@ -23,6 +23,7 @@
 | `{"t":"cfg","v_cruise":0.35}` | muda parametros |
 | `{"t":"goal","g":"explorar"\|"reto"\|"parar"}` | motivacao: repassa a todos; `parar` desarma; no modo auto qualquer outra arma |
 | `{"t":"think","msg":"...","state":"LIVRE","conf":0.8}` | so repassa a todos (pensamento do cerebro) |
+| `{"t":"calibrar"}` | so repassa a todos; o cerebro (S9) reaprende a cor do chao e fica parado enquanto aprende. O visor manda ao clicar em Explorar |
 | `{"t":"ping"}` | responde `pong` |
 
 ## Mensagens que o ESP32 emite (serial + WebSocket)

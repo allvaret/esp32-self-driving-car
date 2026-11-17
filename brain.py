@@ -45,15 +45,17 @@ _last_state = None
 _last_think_t = 0.0
 _last_viz_t = 0.0
 _last_avoid_t = 0.0
+_calib_seen = 0                  # quantos "calibrar" ja foram entregues ao app
 _heading = HeadingHold(Config().heading)   # rumo em linha reta (giroscopio do celular)
 
 
 def start(url=URL):
     """Abre a conexao (thread propria com reconexao). Pode chamar mais de uma vez."""
-    global _link
+    global _link, _calib_seen
     with _lock:
         if _link is None:
             _link = WsLink(url).start()
+            _calib_seen = 0
             _heading.reset()
         if viz is not None:
             viz.start()
@@ -80,6 +82,21 @@ def on_gyro(rate_dps):
     """Kotlin, a cada amostra do giroscopio (~50 Hz): giro em graus/s, > 0 = para a DIREITA.
     Ja projetado no eixo vertical (independe de como o celular esta montado)."""
     _heading.feed_rate(float(rate_dps), time.monotonic())
+
+
+def pop_calibrate():
+    """Kotlin, a cada frame: True UMA vez por comando "calibrar" vindo do visor (botao Explorar).
+    O app entao chama StreamRunner.recalibrate(); enquanto aprende o chao o estado da visao
+    nao e LIVRE/INCERTO, entao step() manda v=0 (o carro fica parado)."""
+    global _calib_seen
+    with _lock:
+        link = _link
+        if link is None or link.calib_seq == _calib_seen:
+            return False
+        _calib_seen = link.calib_seq
+        _heading.reset()
+        link.think("calibrar: aprendendo a cor do chao (carro parado)")
+        return True
 
 
 _STATES = ("OBSTACULO", "INCERTO", "LIVRE")   # ordem: o mais conservador ganha

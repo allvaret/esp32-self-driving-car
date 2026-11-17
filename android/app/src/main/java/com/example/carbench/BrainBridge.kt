@@ -30,6 +30,10 @@ object BrainBridge {
         runCatching { brain().callAttr("step", resultado) }
     }
 
+    /** True UMA vez por comando "calibrar" (botao Explorar do visor). Thread da camera, a cada frame. */
+    fun popCalibrate(): Boolean =
+        runCatching { brain().callAttr("pop_calibrate").toBoolean() }.getOrDefault(false)
+
     fun status(): String =
         runCatching { brain().callAttr("status").toString() }.getOrElse { "brain: erro ${it.message}" }
 
@@ -73,4 +77,4 @@ object BrainBridge {
     fun pauseStatus() {
         polling = false
     }
-}
+}
