@@ -40,7 +40,7 @@
 #define MODE_AUTO 0
 #define MODE_PHONE 1
 #define DEFAULT_MODE MODE_AUTO
-#define MOTOR_BRAKE 1           // 1 = freio ativo ao parar (IN1=IN2=HIGH); 0 = roda livre
+#define MOTOR_BRAKE 0           // 1 = freio ativo ao parar (IN1=IN2=HIGH); 0 = roda livre (sem pico de frenagem)
 #define MOTOR_A_INVERT 1        // motor A (esquerdo) gira ao contrario? ponha 1
 #define MOTOR_B_INVERT 1        // motor B (direito)
 #define SENSOR_SERVO_SIGN -1     // +graus = direita. Se o servo girar ao contrario, ponha -1
@@ -659,7 +659,10 @@ void setup() {
   emitf("{\"t\":\"hello\",\"fw\":\"%s\",\"mode\":\"%s\",\"armed\":false,\"motors\":%d,\"reset\":\"%s\"}",
         FW_VERSION, mode == MODE_AUTO ? "auto" : "phone", MOTORS_ENABLED,
         (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?");
-  if (warm && rtcArmed && rtcRestores < MAX_RESTORES) {     // reset inesperado andando: retoma
+  if (warm && rtcArmed && resetReason == ESP_RST_BROWNOUT) {  // queda de tensao: NAO retoma (religar os motores repete a queda)
+    rtcArmed = 0;
+    emitf("{\"t\":\"log\",\"msg\":\"brownout: fica desarmado (nao retoma)\"}");
+  } else if (warm && rtcArmed && rtcRestores < MAX_RESTORES) {     // outro reset inesperado andando: retoma
     rtcRestores++;
     mode = rtcMode == MODE_PHONE ? MODE_PHONE : MODE_AUTO;
     if (rtcGoal[0]) { strncpy(netGoal, rtcGoal, sizeof(netGoal) - 1); }
