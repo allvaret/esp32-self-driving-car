@@ -1,5 +1,7 @@
 // Simulador host do car_firmware.ino: relogio virtual, sensor HC-SR04 simulado, serial por script.
+// Mundo: 5 posicoes por angulo (-30,-15,0,+15,+30 graus). Yaw simulado a partir das rodas (--world-dps, --yaw).
 #include "Arduino.h"
+#include <cmath>
 #if __has_include("../car_firmware/car_firmware.ino")
 #include "../car_firmware/car_firmware.ino"   // layout sim/ + car_firmware/
 #elif __has_include("car_firmware.ino")
@@ -13,6 +15,10 @@
 #include <vector>
 
 uint64_t g_us = 0;
+WiFiClass WiFi;
+int g_ws_clients = 0;
+unsigned millis_for_ws() { return millis(); }
+esp_reset_reason_t esp_reset_reason() { return ESP_RST_POWERON; }
 static int g_pin[64];
 static int g_pwm_pin[64];       // duty por pino (nos dois cores)
 static int g_ch2pin[16];
@@ -21,12 +27,18 @@ static std::deque<char> g_in;
 static std::string g_outbuf;
 
 // ---- mundo simulado ----
-static float W_obst_cm = 300, W_left = 300, W_right = 300, W_t_obst = 1e12, W_t_clear = 1e12;
+static float W_bin[5] = {300, 300, 300, 300, 300};        // cm em -30,-15,0,+15,+30 (estatico, preso ao carro)
+static float W_obst_cm = 300, W_t_obst = 1e12, W_t_clear = 1e12;   // obstaculo temporario no centro
 static float W_none_t0 = 1e12, W_none_t1 = 1e12, W_far_t0 = 1e12, W_far_t1 = 1e12;
+static float W_dps = 90.0f;                                // giro real do carro com (L-R)=1,2 (v_turn 0,3 + s=1)
+static bool W_yaw = false;                                 // injeta {"t":"yaw"} a cada 50 ms
+static double W_psi = 0, W_rate = 0;
 
 static float simCm(float deg, uint32_t ms) {
-  float cm = deg < -15 ? W_left : (deg > 15 ? W_right : 300.0f);
-  if (deg >= -15 && deg <= 15 && ms >= W_t_obst && ms < W_t_clear) cm = W_obst_cm;
+  int b = (int)lroundf(deg / 15.0f) + 2;
+  b = b < 0 ? 0 : (b > 4 ? 4 : b);
+  float cm = W_bin[b];
+  if (b == 2 && ms >= W_t_obst && ms < W_t_clear) cm = W_obst_cm;
   return cm;
 }
 
@@ -63,10 +75,14 @@ static void emit(const char* s) {
 }
 void SerialStub::print(const char* s) { emit(s); }
 void SerialStub::println(const char* s) { emit(s); emit("\n"); }
+size_t SerialStub::write(const uint8_t* b, size_t n) { std::string t((const char*)b, n); emit(t.c_str()); return n; }
+size_t SerialStub::write(char c) { char t[2] = {c, 0}; emit(t); return 1; }
 int SerialStub::printf(const char* fmt, ...) {
   char b[512]; va_list a; va_start(a, fmt); int n = vsnprintf(b, sizeof b, fmt, a); va_end(a); emit(b); return n;
 }
 SerialStub Serial;
+
+static const char* SUBN[] = {"-", "ESPERA", "PARADA", "OLHA", "RE", "CURVA", "PRESO"};
 
 int main(int argc, char** argv) {
   uint32_t t_end = 20000; const char* inFile = NULL;
@@ -76,10 +92,14 @@ int main(int argc, char** argv) {
     if (a == "--t-end") t_end = (uint32_t)atoi(argv[++i]);
     else if (a == "--obst") { f(W_t_obst); f(W_obst_cm); }
     else if (a == "--clear") f(W_t_clear);
-    else if (a == "--left") f(W_left);
-    else if (a == "--right") f(W_right);
+    else if (a == "--left") { float x; f(x); W_bin[0] = W_bin[1] = x; }
+    else if (a == "--right") { float x; f(x); W_bin[3] = W_bin[4] = x; }
+    else if (a == "--ang") { float d, x; f(d); f(x); int b = (int)lroundf(d / 15.0f) + 2; if (b >= 0 && b <= 4) W_bin[b] = x; }
     else if (a == "--none") { f(W_none_t0); f(W_none_t1); }
     else if (a == "--far") { f(W_far_t0); f(W_far_t1); }
+    else if (a == "--world-dps") f(W_dps);
+    else if (a == "--yaw") W_yaw = true;
+    else if (a == "--ws") g_ws_clients = atoi(argv[++i]);
     else if (a == "--input") inFile = argv[++i];
     else if (a == "--set") { std::string k = argv[++i]; float v = (float)atof(argv[++i]);
       for (int j = 0; j < N_PARAMS; j++) if (k == PARAM_TABLE[j].key) *PARAM_TABLE[j].ptr = v; }
@@ -88,22 +108,32 @@ int main(int argc, char** argv) {
   if (inFile) { std::ifstream fi(inFile); std::string line;
     while (std::getline(fi, line)) { size_t tab = line.find('\t'); if (tab == std::string::npos) continue;
       script.push_back({(uint32_t)atoi(line.substr(0, tab).c_str()), line.substr(tab + 1)}); } }
-  size_t si = 0; uint32_t next_tr = 0; int pc = -1, ps = -1, pa = -1;
+  size_t si = 0; uint32_t next_tr = 0, next_yaw = 0; int pc = -1, ps = -1, pa = -1; uint64_t last_us = 0;
   setup();
   while (millis() < t_end) {
     uint32_t ms = millis();
     while (si < script.size() && script[si].ms <= ms) {
       const std::string& s = script[si++].s;
       if (s == "@btn_down") g_btn = LOW; else if (s == "@btn_up") g_btn = HIGH;
+      else if (s == "@ws_connect") { g_ws_clients++; uint8_t no = (uint8_t)g_ws_clients; wsEvent(no, WStype_CONNECTED, NULL, 0); }
       else { for (char c : s) g_in.push_back(c); g_in.push_back('\n'); }
     }
     g_us += 2000;
     loop();
-    if (cst != pc || sub != ps || (int)armed != pa) { printf("EV %u cst=%d sub=%d armed=%d why=%s\n", millis(), cst, sub, armed, why); pc = cst; ps = sub; pa = armed; }
+    double dt = (double)(g_us - last_us) / 1e6; last_us = g_us;
+    W_rate = W_dps * (double)(curL - curR) / 1.2;          // + = direita (esquerdo mais rapido)
+    W_psi += W_rate * dt;
+    if (W_yaw && millis() >= next_yaw) { next_yaw = millis() + 50;
+      char b[96]; snprintf(b, sizeof b, "{\"t\":\"yaw\",\"psi\":%.2f,\"r\":%.2f}", W_psi, W_rate);
+      for (char c : std::string(b)) g_in.push_back(c); g_in.push_back('\n'); }
+    if (cst != pc || sub != ps || (int)armed != pa) { printf("EV %u cst=%d sub=%d subn=%s armed=%d psi=%.2f why=%s\n", millis(), cst, sub, SUBN[sub], armed, W_psi, why); pc = cst; ps = sub; pa = armed; }
     if (millis() >= next_tr) { next_tr = millis() + 100;
-      printf("TR %u armed=%d mode=%d cst=%d sub=%d curL=%.3f curR=%.3f servo=%.1f center=%.1f enaPWM=%d enbPWM=%d in1=%d in2=%d in3=%d in4=%d steerPWM=%d\n",
-             millis(), armed, mode, cst, sub, curL, curR, servoDeg, centerCm, g_pwm_pin[PIN_ENA], g_pwm_pin[PIN_ENB],
-             g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4], g_pwm_pin[PIN_STEER_SERVO]); }
+      printf("TR %u armed=%d mode=%d cst=%d sub=%d subn=%s curL=%.3f curR=%.3f servo=%.1f center=%.1f cls=%d delegated=%d psi=%.1f "
+             "enaPWM=%d enbPWM=%d in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d\n",
+             millis(), armed, mode, cst, sub, SUBN[sub], curL, curR, servoDeg, centerCm, haveC ? centerClass(millis()) : -1, (int)delegated, W_psi,
+             g_pwm_pin[PIN_ENA], g_pwm_pin[PIN_ENB],
+             g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4], g_pwm_pin[PIN_STEER_SERVO],
+             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel); }
   }
   return 0;
 }

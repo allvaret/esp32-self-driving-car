@@ -1,4 +1,4 @@
-// net.h - softAP + pagina web (porta 80) + WebSocket (porta 81)            car_firmware 0.2
+// net.h - softAP + pagina web (porta 80) + WebSocket (porta 81)            car_firmware 0.4
 //
 // Rede:  o ESP32 cria a rede "CARRINHO" (senha em secrets.h), IP fixo 192.168.4.1.
 // Quem conecta:
@@ -28,13 +28,14 @@ static WebServer http(80);
 static WebSocketsServer ws(WS_PORT);
 static bool netUp = false;
 static char netGoal[24] = "nenhuma";   // ultima motivacao recebida (reenviada a quem conecta)
+static char netSrc[8] = "sensor";      // fonte do goal: "sensor" (modo auto) | "visao" (modo phone)
 
 static void handleJson(const char* line, uint32_t now);   // definida no .ino
 static void onWsConnect(uint8_t num);                      // definida no .ino (reenvia o diario do servo)
 
 // printf para o protocolo: serial + broadcast WebSocket (sem o '\n' final no WS)
 static void emitf(const char* fmt, ...) {
-  char buf[256];
+  char buf[384];
   va_list ap;
   va_start(ap, fmt);
   int n = vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -55,8 +56,8 @@ static void netRelay(const char* line) {
 
 static void wsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
   if (type == WStype_CONNECTED) {
-    char b[64];
-    snprintf(b, sizeof(b), "{\"t\":\"goal\",\"g\":\"%s\"}", netGoal);
+    char b[96];
+    snprintf(b, sizeof(b), "{\"t\":\"goal\",\"g\":\"%s\",\"src\":\"%s\"}", netGoal, netSrc);
     ws.sendTXT(num, b);
     onWsConnect(num);
   } else if (type == WStype_TEXT) {

@@ -11,6 +11,7 @@ android/app/src/main/python/
 .vscode/
 *.exe
 sim/sim3
+sim/sim3.exe
 
 # segredos locais do firmware
 car_firmware/secrets.h

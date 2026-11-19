@@ -22,18 +22,20 @@ class ControlConfig:
     d_stop_m: float = 0.30        # sensor central mais perto -> DESVIO. Derivar: v*(latencia)+frenagem+margem
     d_clear_m: float = 0.60       # leitura valida mais longe "refuta" a visao
     none_score_m: float = 0.45    # valor de um lado SEM eco ao escolher a curva (> perto, < livre)
-    # --- velocidades normalizadas [0, 1] ---
-    v_cruise: float = 0.5
-    v_slow: float = 0.2
+    # --- velocidades normalizadas [0, 1] (iguais as do firmware: Params) ---
+    v_cruise: float = 0.35
+    v_slow: float = 0.15
     v_rev: float = 0.3
     v_turn: float = 0.3
-    # --- servo / varredura ---
-    scan_deg: float = 45.0        # angulo da olhada lateral (e alvo aproximado da curva)
+    # --- servo / varredura: o ESP32 varre -scan_deg..+scan_deg em passos de scan_step_deg (sem o 0) ---
+    scan_deg: float = 30.0
+    scan_step_deg: float = 15.0
     look_timeout_s: float = 1.0   # se o servo nao assentar, segue como 'sem informacao'
     # --- manobra de desvio (s) ---
     stop_s: float = 0.3
-    reverse_s: float = 0.8        # idealmente derivado de reverse_m (ver derive_maneuver_times)
-    turn_s: float = 1.0           # idealmente derivado de turn_deg ~ scan_deg
+    reverse_s: float = 0.5        # idealmente derivado de reverse_m (ver derive_maneuver_times); x1,5 se nao ha saida
+    turn_s: float = 1.0           # SO o controller v1 congelado (tempo fixo). O firmware gira ate o angulo: yaw ou turn_dps
+    turn_dps: float = 90.0        # graus/s com v_turn e steer=1 (CALIBRAR; = calib.yaw_rate_dps). So vale sem yaw do celular
     avoid_retries: int = 2        # re maior + nova olhada antes de desistir (PRESO)
     # --- histerese (s) ---
     clear_s: float = 0.2          # tempo "limpo" p/ voltar a FRENTE / sair de PRESO (antes: 3 ticks @10 fps)
@@ -41,6 +43,12 @@ class ControlConfig:
     guard_window_s: float = 20.0
     guard_max_episodes: int = 2   # a partir do (N+1)-esimo DESVIO na janela, espera em vez de manobrar
     guard_backoff_s: Tuple[float, ...] = (1.0, 2.0, 4.0)   # sobe a cada reentrada; reseta apos a janela
+    # --- "sem eco" em 3 estados e opiniao do celular (firmware; ver docs/parametros_a_calibrar.md) ---
+    vis_fresh_s: float = 0.3      # vis mais velha que isso = sem opiniao
+    yaw_fresh_s: float = 0.2      # yaw mais velho que isso = curva pelo tempo (turn_dps)
+    vis_free_min: float = 50.0    # setor 0 da visao (0..100) a partir do qual "livre"; abaixo = bloqueado/suspeito
+    suspect_s: float = 1.5        # sem eco ate X s depois de leitura valida < d_clear = suspeito
+    yaw_lead_s: float = 0.1       # antecipa o fim da curva em giro*lead (compensa a inercia)
     # --- bordas (hipoteses, nao validadas) ---
     edge_near_h: float = 0.20     # h_cen <= isso (borda perto) ...
     edge_cov_min: float = 0.50    # ... com cobertura >= isso -> edge_near
@@ -104,7 +112,10 @@ class Config:
         for n in ("v_cruise", "v_slow", "v_rev", "v_turn"):
             if not 0 <= getattr(c, n) <= 1:
                 raise ValueError(f"control.{n} deve estar em [0, 1]")
-        for n in ("stop_s", "reverse_s", "turn_s", "clear_s", "look_timeout_s", "guard_window_s"):
+        if c.scan_step_deg <= 0 or c.scan_deg < c.scan_step_deg or c.turn_dps <= 0:
+            raise ValueError("control: scan_step_deg > 0, scan_deg >= scan_step_deg, turn_dps > 0")
+        for n in ("stop_s", "reverse_s", "turn_s", "clear_s", "look_timeout_s", "guard_window_s",
+                  "vis_fresh_s", "yaw_fresh_s", "suspect_s", "yaw_lead_s"):
             if getattr(c, n) < 0:
                 raise ValueError(f"control.{n} nao pode ser negativo")
         if not c.guard_backoff_s or min(c.guard_backoff_s) <= 0:

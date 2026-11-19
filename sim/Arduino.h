@@ -1,6 +1,7 @@
 // Stub minimo da API Arduino/ESP32 para rodar a LOGICA do firmware no PC (g++). Nao e o core real.
 #pragma once
 #include <cstdint>
+#include <cstddef>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -9,6 +10,7 @@
 #include <deque>
 #define HIGH 1
 #define LOW 0
+#define PROGMEM
 #define INPUT 0
 #define OUTPUT 1
 #define INPUT_PULLUP 2
@@ -35,6 +37,8 @@ struct SerialStub {
   int read();
   void print(const char* s);
   void println(const char* s);
+  size_t write(const uint8_t* b, size_t n);
+  size_t write(char c);
   int printf(const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 };
 extern SerialStub Serial;
