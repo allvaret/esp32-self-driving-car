@@ -97,8 +97,10 @@ chaquopy {
 // a cada build. NAO coloque outros arquivos em app/src/main/python: o Sync apaga o que sobra.
 val syncPython by tasks.registering(Sync::class) {
     from(rootDir.parentFile) {          // rootDir = <repo>/android  ->  parentFile = <repo>
-        include("config.py", "vision/*.py", "control/*.py", "hardware/*.py",
-                "tools/__init__.py", "tools/bench_s9.py", "tools/android_entry.py")
+        include("config.py", "vision/*.py", "control/*.py",
+                "tools/__init__.py", "tools/bench_s9.py", "tools/android_entry.py",
+                "tools/ws_link.py", "tools/flight_log.py", "brain.py", "viz.py", "main.py",
+                "replay/__init__.py", "replay/offline.py")   // os dois ultimos: so o app de bancada (run_main)
     }
     into(layout.projectDirectory.dir("src/main/python"))
 }

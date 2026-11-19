@@ -119,19 +119,19 @@ python -m pytest tests -q        # 24 tests
 
 **With the car** (ESP32, L298N, HC-SR04 on a servo, an Android phone):
 
-1. Firmware: copy `car_firmware/secrets.example.h` to `secrets.h` and set the Wi-Fi password, then build `car_firmware/car_firmware.ino` with the Arduino ESP32 core 3.x and the *WebSockets* library (Markus Sattler). Hold BOOT for 3 s to arm. Wiring and protocol: [`docs/architecture.md`](docs/architecture.md), [`docs/protocolo_ws.md`](docs/protocolo_ws.md).
+1. Firmware: copy `car_firmware/secrets.example.h` to `secrets.h` and set the Wi-Fi password, then build `car_firmware/car_firmware.ino` with the Arduino ESP32 core 3.x and the *WebSockets* library (Markus Sattler). Hold BOOT (or press *Explore* on the operator page) and wait 4 s to arm. Wiring and protocol: [`docs/architecture.md`](docs/architecture.md), [`docs/protocolo_ws.md`](docs/protocolo_ws.md).
 2. Phone: build the `android/` project in Android Studio (Chaquopy runs the Python code; Gradle copies the sources). Step by step: [`docs/android.md`](docs/android.md).
 3. Join the `CARRINHO` Wi-Fi network and open `http://192.168.4.1`.
 
 ## Repository layout
 
 ```
-vision/         floor segmentation, decision state machine, edge probe (+ optical-flow experiment)
-control/        controller state machine and the hardware abstraction (hal.py)
+vision/         floor segmentation, decision state machine, free-space sectors, edge probe
+control/        hardware abstraction (hal.py), heading hold, mocks for tests; the v1 controller is frozen
 config.py       every tunable value in one place
-main.py         frame loop (Runner) and command-line replay
-brain.py, viz.py   phone side of the link to the ESP32, and the MJPEG viewer
-replay/         replay with a mocked sensor
+main.py         live vision path (StreamRunner); no decisions
+brain.py, viz.py   phone side of the link to the ESP32 (opinion + heading), local log, MJPEG viewer
+replay/         offline loop and replay with a mocked sensor (not part of the live path)
 car_firmware/   ESP32 firmware
 android/        Android app (Chaquopy + CameraX)
 sim/            host simulator for firmware v0.2 (legacy)

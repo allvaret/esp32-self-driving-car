@@ -22,7 +22,8 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 |---|---|---|---|
 | `calib.speed_at_v_rev_mps` | `None` | MEDIR | Comandar `v = v_rev` em linha reta por 2 s sobre uma pista de 1 m marcada; velocidade = distância / tempo. Repetir 3x. |
 | `calib.yaw_rate_dps` | `None` | MEDIR | Comandar `steer = 1`, `v = v_turn` por 2 s; medir o ângulo girado (transferidor no chão ou vídeo de cima) e dividir por 2. |
-| `control.v_cruise / v_slow / v_rev / v_turn` | 0,5 / 0,2 / 0,3 / 0,3 | DEMO | Escolher velocidades que o carro realmente consiga manter; anotar a velocidade em m/s de cada uma. |
+| `control.v_cruise / v_slow / v_rev / v_turn` | 0,35 / 0,15 / 0,3 / 0,3 (= `Params` do firmware; `tests/test_config_firmware.py` confere) | DEMO | Escolher velocidades que o carro realmente consiga manter; anotar a velocidade em m/s de cada uma. |
+| **`control.turn_dps`** (firmware `turn_dps`) | 90 °/s | **MEDIR** | Graus/s com `v = v_turn` e `steer = 1` (= `calib.yaw_rate_dps`). **Só vale quando o celular não manda `yaw`** (a curva é feita pelo tempo `ângulo / turn_dps`). Medir com 360° completos, 3x, na bateria carregada. Com `yaw` fresco a curva gira até o ângulo e este valor só define o timeout. |
 | Latência comando → movimento | desconhecida | MEDIR | Filmar o carro e marcar o instante do envio do comando (log no celular) e o início do movimento. |
 | Distância de frenagem de `v_cruise` | desconhecida | MEDIR | Mandar `v = 0` em plena marcha e medir quanto ele anda até parar. |
 
@@ -33,7 +34,7 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | `control.d_stop_m` | 0,30 m | DEMO | `d_stop ≥ v_cruise[m/s] · (latência visão + comunicação + ciclo do sensor) + frenagem + margem`. |
 | `control.d_clear_m` | 0,60 m | DEMO | Distância a partir da qual uma leitura válida "refuta" a visão. Escolher com base no alcance confiável medido. |
 | `control.none_score_m` | 0,45 m | DEMO | Valor dado a um lado sem eco ao escolher a curva. Revisar com a taxa de "sem eco" medida por tipo de superfície. |
-| `control.scan_deg` | 45° | DEMO | Ângulo da olhada lateral. Deve ficar próximo do ângulo girado na curva (`turn_s`). |
+| `control.scan_deg` / `scan_step_deg` | 30° / 15° | DEMO | O ESP32 varre -30, -15, +15, +30 (o centro é o obstáculo) e **gira até o melhor ângulo**. O passo de 15° é a abertura do feixe do HC-SR04 e o passo do servo. Alinhado aos 5 setores da visão (FOV ~74°, ~14,8° por setor). |
 | `control.look_timeout_s` | 1,0 s | DEMO | Maior que o tempo de assentamento do servo medido. |
 | Tempo de assentamento do servo (`MockRangeHead.settle_s`) | 0,15 s | MEDIR | Cronometrar de `aim()` até a leitura estável, para -45°, 0° e +45°. |
 | Alcance útil (`MockRangeHead.max_range_m`) | 2,0 m | MEDIR | Teste de bancada: o HC-SR04 especifica ~2–400 cm, mas o alcance útil em objetos pequenos costuma ser menor. |
@@ -41,13 +42,23 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | Ciclo mínimo entre leituras | ≥ 60 ms (especificação) | MEDIR | Confirmar no firmware. Limita a taxa de varredura. |
 | Posição do sensor em relação à câmera (paralaxe) | não modelada | MEDIR | Medir o deslocamento em cm; compensar o ângulo do servo em curta distância. |
 
+### 2b. "Sem eco" em 3 estados e opinião do celular (firmware 0.4; `control.*`)
+
+| Parâmetro | Valor atual | Status | Como obter |
+|---|---|---|---|
+| **`vis_free_min`** | 50 (setor 0, escala 0..100) | **MEDIR** | Valor do setor central (`sectors[2]`, percentil 20 da altura de chão livre) a partir do qual a visão diz "livre". Gravar o log (`sec`) andando em chão livre, em frente a uma parede e a um objeto baixo; escolher o limiar entre as duas populações. Abaixo dele: sem eco = **suspeito**, e a nota de um lado sem eco cai para `d_stop/2`. |
+| **`suspect_ms`** | 1500 ms | **MEDIR** | Quanto tempo depois de uma leitura válida < `d_clear` um "sem eco" ainda é tratado como suspeito. Medir com uma parede em diagonal e com tecido do sofá: duração típica do "sem eco" depois de um eco válido. Longo demais = carro parado à toa; curto demais = volta a acelerar contra a parede. |
+| `vis_fresh_ms` / `yaw_fresh_ms` | 300 / 200 ms | DEMO | `vis` sai a ~10 Hz e `yaw` a ~20 Hz; devem ser ≥ 2–3 períodos e menores que `wd_ms`. Ver no log o atraso real do S9. |
+| `yaw_lead_ms` | 100 ms | DEMO | Antecipa o fim da curva em `giro × lead` (inércia). Se o carro passa do ângulo, aumente; se fica curto, diminua. |
+| `none_score_cm` | 45 | DEMO | Nota de uma posição sem eco **quando não há visão fresca** (com visão: livre = `max_range_cm`, bloqueado = `d_stop/2`). |
+
 ## 3. Manobra do controller (`control.*`)
 
 | Parâmetro | Valor atual | Status | Como obter |
 |---|---|---|---|
 | `control.stop_s` | 0,3 s | DEMO | Tempo para o carro parar de fato. Usar a frenagem medida. |
-| `control.reverse_s` | 0,8 s | DEMO | Derivar com `derive_maneuver_times(cfg, reverse_m, turn_deg)` a partir de `speed_at_v_rev_mps`. |
-| `control.turn_s` | 1,0 s | DEMO | Idem, a partir de `yaw_rate_dps` (alvo: girar ≈ `scan_deg`). |
+| `control.reverse_s` | 0,5 s (×1,5 sem saída) | DEMO | Derivar com `derive_maneuver_times(cfg, reverse_m, turn_deg)` a partir de `speed_at_v_rev_mps`. |
+| `control.turn_s` | 1,0 s | DEMO | **Só o controller v1 congelado** (tempo fixo). O firmware não usa mais `turn_ms`: gira até o ângulo (yaw) ou `ângulo / turn_dps`. |
 | `control.avoid_retries` | 2 | DEMO | Quantas vezes tentar de novo (ré maior + nova olhada) antes do PRESO. |
 | `control.clear_s` | 0,2 s | HIPÓTESE | Tempo "limpo" para voltar a FRENTE (equivale a 3 ticks a 10 fps). Revisar com o fps real do S9. |
 | `control.guard_window_s / guard_max_episodes / guard_backoff_s` | 20 s / 2 / (1, 2, 4) s | DEMO | Testar com uma pessoa atravessando à frente do carro; ajustar para o tempo típico de passagem. |
@@ -98,7 +109,7 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | Exposição / balanço de branco | automáticos | MEDIR | Travar AE/AWB no S9 (parte do problema de luz vem do auto-exposure). |
 | fps e latência de processamento no S9 | desconhecidos | MEDIR | Teste de fumaça (ver plano do S9). |
 
-## 9. Comunicação e ESP32 (propostas, sem firmware ainda)
+## 9. Comunicação e ESP32 (firmware 0.4)
 
 | Item | Valor proposto | Observação |
 |---|---|---|
@@ -106,6 +117,8 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | `wd_ms` (watchdog sem `drive`) | 500 | Maior que o período de envio de comandos. |
 | Taxa de envio de `drive` | a definir | Pelo menos o dobro de 1/`wd_ms`. |
 | Baud da serial | 115200 | Confirmar no firmware. |
+| `ARM_DELAY_MS` | 4000 | Cobre a calibração do chão no celular (SETTLE 1 s + 11 frames); o ESP32 ignora `vis` com `ok:0`. |
+| Taxas do celular | `vis` ~10 Hz, `yaw` ~20 Hz, `drive` a cada frame | Mensagens ≤ 160 bytes (testado). |
 
 ---
 
@@ -133,5 +146,7 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | `heading.engage_delay_s` | 0,4 s | DEMO | Ignora a arrancada (kick + escalonamento dos motores). |
 | `heading.stale_s` | 0,3 s | DEMO | Sem amostra do giroscópio por esse tempo, não corrige. |
 
-Conferir no app antes de rodar: a faixa de status mostra `rumo: giro=... psi=...`. Girar o carro
+O `psi` que o celular manda ao ESP32 (`{"t":"yaw"}`) vem de outro integrador (`YawIntegrator`, **sem o limite de ±20°**), com o mesmo filtro e a mesma estimativa de viés (feita com as rodas paradas, lida do `state` do ESP32).
+
+Conferir no app antes de rodar: a faixa de status mostra `psi=...` e `rumo: giro=...`. Girar o carro
 à mão para a DIREITA tem que dar giro positivo; se der negativo, inverta o sinal em `YawSensor.kt`.

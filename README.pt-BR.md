@@ -119,7 +119,7 @@ python -m pytest tests -q        # 24 testes
 
 **Com o carro** (ESP32, L298N, HC-SR04 em um servo, um celular Android):
 
-1. Firmware: copie `car_firmware/secrets.example.h` para `secrets.h` e defina a senha do Wi-Fi; depois compile `car_firmware/car_firmware.ino` com o core ESP32 3.x do Arduino e a biblioteca *WebSockets* (Markus Sattler). Segure o BOOT por 3 s para armar. Ligações e protocolo: [`docs/architecture.md`](docs/architecture.md), [`docs/protocolo_ws.md`](docs/protocolo_ws.md).
+1. Firmware: copie `car_firmware/secrets.example.h` para `secrets.h` e defina a senha do Wi-Fi; depois compile `car_firmware/car_firmware.ino` com o core ESP32 3.x do Arduino e a biblioteca *WebSockets* (Markus Sattler). Aperte o BOOT (ou *Explorar* no visor) e espere 4 s para armar. Ligações e protocolo: [`docs/architecture.md`](docs/architecture.md), [`docs/protocolo_ws.md`](docs/protocolo_ws.md).
 2. Celular: compile o projeto `android/` no Android Studio (o Chaquopy executa o código Python; o Gradle copia os fontes). Passo a passo: [`docs/android.md`](docs/android.md).
 3. Conecte-se à rede Wi-Fi `CARRINHO` e abra `http://192.168.4.1`.
 
@@ -129,7 +129,7 @@ python -m pytest tests -q        # 24 testes
 vision/         segmentação do chão, máquina de estados de decisão, sonda de bordas (+ experimento de fluxo óptico)
 control/        máquina de estados do controlador e abstração de hardware (hal.py)
 config.py       todos os valores ajustáveis em um só lugar
-main.py         laço de frames (Runner) e replay por linha de comando
+main.py         caminho ao vivo da visão (StreamRunner); sem decisões
 brain.py, viz.py   lado do celular no enlace com o ESP32, e o visor MJPEG
 replay/         replay com sensor simulado
 car_firmware/   firmware do ESP32

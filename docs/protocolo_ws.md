@@ -1,37 +1,70 @@
-# Protocolo celular <-> ESP32 (firmware 0.2)
+# Protocolo celular <-> ESP32 (firmware 0.4)
+
+**Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
+*opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
 
 ## Rede
 - ESP32 em softAP: SSID `CARRINHO`, senha definida em `car_firmware/secrets.h` (modelo: `secrets.example.h`; sem ele vale `troque-esta-senha`), IP `192.168.4.1`.
 - `http://192.168.4.1` -> pagina do visor (pensamento + motivacao). Funciona em qualquer navegador.
 - `ws://192.168.4.1:81/` -> WebSocket. Uma mensagem JSON por frame, mesmo formato da serial.
+- `http://<ip-do-S9>:8080/stream` (MJPEG da visao), `/logs` (lista) e `/log/<nome>` (download dos logs JSONL gravados no celular). O link aparece no visor.
 - Android: ao conectar no CARRINHO, aceitar "rede sem internet / manter conectado".
 
 ## Papeis
 | Quem | Conecta em | Faz |
 |---|---|---|
-| Visor (2o celular) | pagina web | escolhe motivacao, modo, PARAR TUDO; ve estado, radar e pensamento |
-| Cerebro (S9, Python) | WebSocket | recebe goal/state/range; manda drive/aim (>= 10 Hz) e think |
-| ESP32 | - | reflexo (parada por distancia, watchdog 500 ms, limite de re) e repasse |
+| Visor (2o celular) | pagina web | **Explorar: sensor**, **Explorar: visao**, **PARAR TUDO**; ve estado (fonte e angulo escolhido), radar e pensamento; baixa os logs |
+| Cerebro (S9, Python) | WebSocket | recebe goal/state/range/scan; manda `vis` (~10 Hz), `yaw` (~20 Hz), `mode`, `think`; na fonte visao, `drive` (a cada frame) e `avoid` |
+| ESP32 | - | **decide e executa** tudo: FRENTE/VARREDURA/DESVIO, reflexos, veto do sensor, varredura por angulo, curva, guarda de reentrada |
+
+**Fonte do goal** (`src`): `sensor` = modo `auto` (so o sensor; a visao e ignorada). `visao` = modo `phone` (o celular manda o `drive`; o ESP32 veta e manobra). Sem `src` vale `sensor`.
 
 ## Mensagens que o ESP32 recebe
+Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garante isso.
+
 | JSON | Efeito |
 |---|---|
-| `{"t":"drive","v":0.3,"s":0}` | so no modo phone; vale por `wd_ms` |
-| `{"t":"aim","deg":45}` | so no modo phone |
-| `{"t":"mode","m":"auto"\|"phone"}` | troca o modo |
-| `{"t":"arm","on":true\|false}` | arma (3 s) / desarma |
+| `{"t":"goal","g":"explorar","src":"sensor"\|"visao"}` | motivacao do visor: define o modo pela fonte, **arma sozinho** (contagem de 4 s) e repassa a todos |
+| `{"t":"goal","g":"parar"}` | **reset completo** (ver abaixo) e avisa todos |
+| `{"t":"vis","ok":1,"s":[100,100,90,100,40]}` | opiniao da visao: 5 setores livres 0..100 em -30,-15,0,+15,+30 graus. `ok:0` (calibrando/erro) ou mais velha que `vis_fresh_ms` (300) = sem opiniao. **So o modo phone usa** |
+| `{"t":"yaw","psi":-12.3,"r":-45.2}` | rumo acumulado (graus, + = direita, sem limite; so o delta importa) e giro (graus/s). Mais velho que `yaw_fresh_ms` (200) = sem yaw (curva pelo tempo, `turn_dps`) |
+| `{"t":"drive","v":0.3,"s":0}` | so no modo phone; vale por `wd_ms` (500). `s` > 0 = direita |
+| `{"t":"avoid","deg":-15}` | modo phone, armado: o ESP32 faz o desvio. `deg` (opcional) = angulo sugerido pela visao (setor mais livre): a varredura comeca por ele e ele so e aceito se o sensor nao vetar |
+| `{"t":"aim","deg":45}` | so no modo phone (bancada) |
+| `{"t":"mode","m":"auto"\|"phone"}` | troca o modo (idempotente: o mesmo modo nao reinicia nada) |
+| `{"t":"arm","on":true\|false}` | arma (4 s) / desarma (`false` = reset completo) |
 | `{"t":"cfg","v_cruise":0.35}` | muda parametros |
-| `{"t":"goal","g":"explorar"\|"reto"\|"parar"}` | motivacao: repassa a todos; `parar` desarma; no modo auto qualquer outra arma |
-| `{"t":"think","msg":"...","state":"LIVRE","conf":0.8}` | so repassa a todos (pensamento do cerebro) |
-| `{"t":"calibrar"}` | so repassa a todos; o cerebro (S9) reaprende a cor do chao e fica parado enquanto aprende. O visor manda ao clicar em Explorar |
+| `{"t":"think","msg":"...","state":"LIVRE","conf":0.8}` | so repassa a todos (o brain narra so a VISAO) |
+| `{"t":"calibrar"}` | so repassa; o cerebro reaprende a cor do chao (a opiniao fica `ok:0` enquanto isso). O visor manda ao clicar em "Explorar: visao" |
 | `{"t":"ping"}` | responde `pong` |
+
+### Reset completo
+`goal parar`, `arm false` e o BOOT desarmando levam tudo ao estado inicial: `armed`/`delegated` falsos, modo padrao
+(`auto`), FSM zerada (`resetAuto`), comandos zerados, e **limpam `rtcArmed`, `rtcMode` e `rtcGoal`** (um reset de
+hardware depois disso nao retoma). O ESP32 emite `{"t":"goal","g":"parar"}` para o visor e o celular acompanharem.
+O brain, ao ver o goal `parar` ou o `armed:false`, zera o goal/src lembrados, o `HeadingHold` e o integrador de yaw.
 
 ## Mensagens que o ESP32 emite (serial + WebSocket)
 `hello`, `state` (a cada 500 ms), `range` (cada leitura; no modo auto so com clientes WS),
-`log`, `cfg_ok`, `pong`, e os `goal`/`think` repassados. Ao conectar, cada cliente recebe o `goal` atual.
+`log`, `cfg_ok`, `pong`, `scan` e os `goal`/`think` repassados. Ao conectar, cada cliente recebe o `goal` atual (com `src`) e o diario do servo.
 
-`scan` e o diario do servo nas manobras de desvio (guardado na RTC; reenviado com `"replay":1` a quem conecta,
-se o ESP32 nao ficou sem energia): `{"k":"aim","deg":-45}` (ordem ao servo),
-`{"k":"olha","deg":-45,"got":1,"cm":38.1}` (`cm:null` com `got:1` = sem eco/livre; `got:0` = estourou o tempo, sem leitura) e
-`{"k":"decide","L":38.1,"R":50.0,"side":1}` (notas E/D e lado escolhido; `side` -1 esquerda, +1 direita, 0 sem lado).
-`n` = sequencia, `boot` = numero do boot, `ms` = uptime em ms.
+`state`: `mode`, `src` (`sensor`/`visao`), `armed`, `esp` (o ESP32 esta no comando), `st`/`sub` (FSM; `sub` = ESPERA, PARADA, OLHA, RE, CURVA, PRESO),
+`c` (mediana central em cm, -1 = sem eco), `cls` (`valida`/`livre`/`suspeito`), `deg` (servo), `ang` (angulo escolhido na ultima varredura ou `null`),
+`vis`/`yaw` (1 = opiniao/rumo frescos), `L`/`R` (motores), `why`, `up`, `rst`, `rest`.
+
+### "Sem eco" em 3 estados
+Sempre pela **mediana** e pelo historico, nunca pelo ping bruto:
+- **valida**: ha eco.
+- **livre**: sem eco **e** (visao fresca com setor 0 >= `vis_free_min`, **ou** nenhuma leitura < `d_clear_cm` nos ultimos `suspect_ms`).
+- **suspeito**: sem eco logo depois de leitura valida < `d_clear_cm` (ate `suspect_ms`), **ou** visao fresca com setor 0 < `vis_free_min`.
+  Suspeito => para e varre (como DESVIO, sem re inicial). `forwardAllowed` bloqueia o avanco.
+
+### `scan` (diario do servo)
+Guardado na RTC e reenviado com `"replay":1` a **todo cliente novo** (se o ESP32 nao ficou sem energia):
+`{"k":"aim","deg":-15}` (ordem ao servo), `{"k":"olha","deg":-15,"got":1,"cm":38.1}` (`cm:null` com `got:1` = sem eco; `got:0` = estourou o tempo) e
+`{"k":"decide","ang":-15,"x":0,"d":[-30,-15,15,30],"sc":[45,45,38,200]}` (angulo escolhido, notas por posicao em cm, `-1` = nao varrida;
+`x:1` = sem saida, `ang:null`). `n` = sequencia, `boot` = numero do boot, `ms` = uptime em ms.
+
+## Logs no celular (nada e transmitido durante a corrida)
+O brain grava JSONL em `filesDir/logs`, um arquivo por goal (`explorar_<src>_<data>.jsonl`): por frame (`k:"f"`: `vs`, `r`, `sec`, `e`, `v`, `s`),
+tudo que enviou (`k:"tx"`) e toda mensagem recebida do ESP32 (`k:"rx"`: state, range, scan, log, goal). Baixe depois pelo link do visor (`/logs`).

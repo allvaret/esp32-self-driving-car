@@ -34,8 +34,8 @@ Each entry is a problem I hit, what I chose, and the evidence in the repository.
 
 ## 7. Hide the hardware behind small interfaces
 **Problem:** testing the control loop on the car costs a battery cycle and a lot of floor time.
-**Decision:** the controller only sees a range head and a drive link. Mock versions replay a recorded video against a scripted sensor scenario (with optional noise, dropouts and faults), so the same `Runner` is used on the PC, in tests and on the phone.
-**Evidence:** `control/hal.py`, `replay/replay_main.py`, `tests/test_main.py`. A replay is open loop: the video does not react to commands, so it validates decisions and timing, not closed-loop behavior.
+**Decision:** the controller (now frozen, v1) only sees a range head and a drive link. Mock versions replay a recorded video against a scripted sensor scenario (with optional noise, dropouts and faults); the offline `Runner` lives in `replay/offline.py`, and the live path (`StreamRunner`) shares only the vision (`VisionRunner`).
+**Evidence:** `control/hal.py`, `control/mocks.py`, `replay/offline.py`, `replay/replay_main.py`, `tests/test_main.py`. A replay is open loop: the video does not react to commands, so it validates decisions and timing, not closed-loop behavior.
 
 ## 8. Measure before optimizing, and leave cores free
 **Problem:** the budget is 100 ms per frame at 10 fps (33 ms at 30 fps) on a 2018 phone.
@@ -45,3 +45,7 @@ Each entry is a problem I hit, what I chose, and the evidence in the repository.
 ## 9. Keep experiments out of the run loop
 Optical flow was implemented and logged, then dropped: it did not solve the hardest case (the wall whose color is close to the floor's). The experiment file was removed from the repository (it was an exact copy of `edge_probe.py`); it is in the git history.
 
+## 10. One executor of maneuvers: the ESP32
+**Problem:** two state machines (the phone's `Controller`, which ran against a mock sensor and whose output went nowhere, and the firmware's) disagreed, and the phone's reason text leaked into the vision state parsed by the brain.
+**Decision:** the firmware is the only executor. The phone sends the vision's opinion (state, confidence, 5 free-space sectors aligned with the sensor servo) and the gyroscope heading; with the *vision* source it also sends `drive` and `avoid`. "No echo" became three states (valid, free, suspect) decided from the median, the recent history and the fresh vision, never from the raw ping; the sweep picks the best angle, not just a side, and the turn runs until the measured yaw reaches it. The `Controller` stays in the repository frozen, as the v1 reference.
+**Evidence:** `car_firmware/car_firmware.ino`, `brain.py`, `docs/protocolo_ws.md`, `sim/check_firmware.py` (66 checks in a host simulator), `tests/test_live_path.py` (the live path imports neither the controller nor the mocks).
