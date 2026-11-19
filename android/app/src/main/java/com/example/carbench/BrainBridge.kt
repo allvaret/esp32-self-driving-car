@@ -19,8 +19,11 @@ object BrainBridge {
 
     private fun brain(): PyObject = Python.getInstance().getModule("brain")
 
-    /** Chame no onResume: abre a conexao com o carro (rede CARRINHO). */
-    fun start() = io.execute { runCatching { brain().callAttr("start") } }
+    /** Chame no onResume: abre a conexao com o carro (rede CARRINHO). logDir = pasta do log local (filesDir/logs). */
+    fun start(logDir: String? = null) = io.execute {
+        runCatching { if (logDir != null) brain().callAttr("set_log_dir", logDir) }
+        runCatching { brain().callAttr("start") }
+    }
 
     /** Chame no onPause: para o carro e fecha a conexao. */
     fun stop() = io.execute { runCatching { brain().callAttr("stop") } }

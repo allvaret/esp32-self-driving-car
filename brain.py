@@ -28,6 +28,7 @@ import time
 import viz
 from config import Config
 from control.heading import HeadingHold, YawIntegrator
+from tools.flight_log import FlightLog
 from tools.ws_link import WsLink
 
 # ----------------------------- parametros [DEMO] -----------------------------
@@ -61,7 +62,8 @@ _last_vis = {"ok": False, "s": None, "state": None, "conf": None}
 _oversize = 0                    # mensagens descartadas por passarem de MAX_MSG (deve ficar em 0)
 _heading = HeadingHold(Config().heading)      # rumo em reta (so src=visao)
 _yaw = YawIntegrator(Config().heading)        # psi sem limite para o ESP32 (sempre)
-_logger = None                                # log local (bloco 5)
+_logger = None                                # log local JSONL (tools/flight_log.py)
+_log_dir = None
 
 
 def _reset_motion():
@@ -69,10 +71,19 @@ def _reset_motion():
     _yaw.reset()
 
 
+def set_log_dir(path):
+    """Kotlin, antes de start(): pasta do log local (filesDir/logs). viz.py serve os arquivos em /logs."""
+    global _log_dir
+    _log_dir = str(path) if path else None
+    viz.set_log_dir(_log_dir)
+
+
 def start(url=URL):
     """Abre a conexao (thread propria com reconexao). Pode chamar mais de uma vez."""
-    global _link, _calib_seen, _last_key, _last_conn_seq
+    global _link, _calib_seen, _last_key, _last_conn_seq, _logger
     with _lock:
+        if _logger is None and _log_dir:
+            _logger = FlightLog(_log_dir).start()
         if _link is None:
             _link = WsLink(url, on_msg=_on_msg).start()
             _calib_seen = 0
@@ -85,8 +96,8 @@ def start(url=URL):
 
 
 def stop():
-    """Para o carro e fecha a conexao."""
-    global _link, _last_key
+    """Para o carro e fecha a conexao (e o log)."""
+    global _link, _last_key, _logger
     with _lock:
         if _link is not None:
             _link.drive(0, 0)
@@ -98,6 +109,9 @@ def stop():
             viz.stop()
         _last_key = None
         _reset_motion()
+        lg, _logger = _logger, None
+    if lg is not None:
+        lg.close()
 
 
 def _on_msg(m):
@@ -195,7 +209,7 @@ def _parse(estado):
         st, ok = _fold(d), True
     if st not in _STATES:
         st, ok = None, False
-    return {"state": st, "conf": conf, "ok": ok, "sectors": sectors}
+    return {"state": st, "conf": conf, "ok": ok, "sectors": sectors, "raw": d if isinstance(d, dict) else None}
 
 
 def _norm_state(estado):
@@ -298,7 +312,7 @@ def step(estado, conf=None, msg=None):
             _send(o)
         lg = _logger
         if lg is not None:
-            lg.frame(now, p, goal, src, v, s)
+            lg.frame(p, goal, src, v, s)
         return (v, s)
 
 

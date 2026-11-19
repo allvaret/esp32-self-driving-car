@@ -8,6 +8,8 @@ Uso (dentro do StreamRunner.process_rgba_frame, depois de calcular a mascara):
     viz.push(frame=bgr, prob=backproj, mask=mask)      # qualquer subconjunto; nomes livres
 O brain.start() ja chama viz.start(). Custo: so codifica a cada 1/FPS s (~1-2 ms no S9).
 """
+import html
+import os
 import socket
 import threading
 import time
@@ -25,6 +27,7 @@ _jpeg = None
 _cond = threading.Condition()
 _last_push = 0.0
 _server = None
+_log_dir = None
 
 
 def _tile(img, label):
@@ -67,11 +70,57 @@ def push(**layers):
         pass                                           # visualizacao nunca derruba o cerebro
 
 
+def set_log_dir(path):
+    """Pasta dos logs JSONL do brain (rotas /logs e /log/<nome>)."""
+    global _log_dir
+    _log_dir = path
+
+
 class _H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _logs(self):
+        from tools import flight_log
+        rows = flight_log.list_logs(_log_dir) if _log_dir else []
+        body = ["<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>Logs do carrinho</title><body style='font:16px system-ui;padding:12px'><h3>Logs do celular</h3>"]
+        body += [f"<p><a href='/log/{html.escape(n)}' download>{html.escape(n)}</a> ({sz // 1024} KB)</p>" for n, sz in rows]
+        if not rows:
+            body.append("<p>nenhum log ainda</p>")
+        data = "".join(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _log(self, name):
+        from tools import flight_log
+        p = flight_log.safe_path(_log_dir, name) if _log_dir else None
+        if p is None:
+            self.send_error(404)
+            return
+        size = os.path.getsize(p)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
+        self.send_header("Content-Length", str(size))
+        self.end_headers()
+        with open(p, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
     def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/logs":
+            return self._logs()
+        if path.startswith("/log/"):
+            from urllib.parse import unquote
+            return self._log(unquote(path[5:]))
         if not self.path.startswith("/stream"):
             self.send_error(404)
             return

@@ -83,7 +83,7 @@ class LiveActivity : ComponentActivity() {
     private fun analyze(img: ImageProxy) {
         try {
             val s = stream ?: Python.getInstance().getModule("main")
-                .callAttr("StreamRunner", true, File(filesDir, "live_log.csv").absolutePath)
+                .callAttr("StreamRunner", true)       // o log por frame agora e o JSONL do brain (filesDir/logs)
                 .also { stream = it }
             // botao na tela OU comando "calibrar" do visor (Explorar): reaprende o chao
             if (BrainBridge.popCalibrate() || wantCal) { wantCal = false; s.callAttr("recalibrate") }
@@ -138,7 +138,7 @@ class LiveActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    override fun onResume() { super.onResume(); BrainBridge.start(); BrainBridge.resumeStatus(); yaw.start() }
+    override fun onResume() { super.onResume(); BrainBridge.start(File(filesDir, "logs").absolutePath); BrainBridge.resumeStatus(); yaw.start() }
 
     override fun onPause()  { yaw.stop(); BrainBridge.pauseStatus(); BrainBridge.stop(); super.onPause() }
 }

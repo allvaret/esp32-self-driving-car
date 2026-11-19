@@ -52,6 +52,8 @@ canvas{width:100%;height:auto;display:block}
 <div style="margin-bottom:6px">E <div class="bar"><i id="bl"></i></div></div>
 <div>D <div class="bar"><i id="br"></i></div></div></div>
 
+<div class="card"><div class="lbl">Logs do celular</div><a id="logs" style="color:var(--ac)" href="#">aguardando o celular...</a></div>
+
 <div class="card"><div class="lbl">Pensamento</div><div id="log"></div></div>
 
 <script>
@@ -103,7 +105,8 @@ function handle(m){
       const nt=(m.d||[]).map((d,i)=>d+'°='+(m.sc[i]<0?'-':m.sc[i])).join('  ');
       addLog('[servo] notas '+nt+' -> '+(m.x?'sem saida (re maior)':'curva '+m.ang+'°')+r,'var(--wa)');}
   }else if(m.t==='think'){
-    if(m.viz&&m.viz!==vizUrl){vizUrl=m.viz;$('viz').src=m.viz+'?'+Date.now();}
+    if(m.viz&&m.viz!==vizUrl){vizUrl=m.viz;$('viz').src=m.viz+'?'+Date.now();
+      try{const a=$('logs');a.href=new URL(m.viz).origin+'/logs';a.textContent='baixar logs gravados no celular';a.target='_blank';}catch(_){}}
     if(m.state)$('vis').textContent='visao: '+m.state+(m.conf!=null?' ('+Math.round(m.conf*100)+'%)':'');
     if(m.msg)addLog('[cerebro] '+m.msg);
   }else if(m.t==='goal'){
