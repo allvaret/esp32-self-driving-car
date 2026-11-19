@@ -103,3 +103,62 @@ class HeadingHold:
         self.last = {"on": True, "why": "", "rate": self._r, "psi": self._psi,
                      "bias": self._bias, "s_corr": corr}
         return s_out, self.last
+
+
+class YawIntegrator:
+    """Rumo acumulado SEM limite (graus, + = direita) e giro filtrado, para o ESP32 medir curvas.
+
+    Mesmo tratamento de vies do HeadingHold (filtro de 1a ordem; vies estimado com o carro PARADO,
+    ignorando amostras fora de +-bias_gate_dps), mas sem anti-windup: o psi precisa valer 90 graus
+    numa curva de 90 graus. So o DELTA de psi importa para o firmware; reset() zera o psi e
+    mantem o vies ja estimado (reset(full=True) zera tudo).
+
+    Uso (brain.on_gyro):   yi.feed_rate(rate_dps, t, still)   # still = rodas paradas
+    """
+
+    def __init__(self, cfg=None):
+        self.cfg = cfg or HeadingConfig()
+        self.reset(full=True)
+
+    def reset(self, full=False):
+        self._t_rate = None
+        self._r = 0.0
+        self._psi = 0.0
+        self._t_still = None
+        if full:
+            self._bias = 0.0
+
+    @property
+    def psi(self):
+        return self._psi
+
+    @property
+    def rate(self):
+        return self._r
+
+    @property
+    def bias(self):
+        return self._bias
+
+    def feed_rate(self, rate_dps, t, still=False):
+        c = self.cfg
+        if still:
+            if self._t_still is None:
+                self._t_still = t
+        else:
+            self._t_still = None
+        if self._t_rate is None:
+            self._r = rate_dps - self._bias
+            self._t_rate = t
+            return
+        dt = t - self._t_rate
+        if dt <= 0.0:
+            return
+        dt = min(dt, c.max_dt_s)
+        a = dt / (c.rate_tau_s + dt)
+        if (self._t_still is not None and t - self._t_still >= c.bias_still_s
+                and abs(rate_dps - self._bias) <= c.bias_gate_dps):
+            self._bias += (rate_dps - self._bias) * min(1.0, dt / c.bias_tau_s)
+        self._r += a * ((rate_dps - self._bias) - self._r)
+        self._psi += self._r * dt
+        self._t_rate = t

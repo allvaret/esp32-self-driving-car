@@ -1,31 +1,33 @@
-"""brain.py - cola entre a visao (StreamRunner) e o ESP32 via WebSocket.
+"""brain.py - cola entre a visao (StreamRunner) e o ESP32 via WebSocket. UNICO dono da conexao.
 
-Uso (Kotlin, LiveActivity):
-    onCreate  : py.getModule("brain").callAttr("start")
-    por frame : py.getModule("brain").callAttr("step", estado, conf, msg)   # depois da visao
-    onPause   : py.getModule("brain").callAttr("stop")
-    (opcional): py.getModule("brain").callAttr("status")  -> texto para mostrar na tela
+Caminho 1: o ESP32 e o UNICO executor de manobras. O celular NAO tem maquina de estados: so
+  - narra a OPINIAO da visao ao ESP32: {"t":"vis","ok":0|1,"s":[5 ints]}  (~10 Hz; s = setores livres
+    0..100 em -30,-15,0,+15,+30 graus; ok=0 = sem opiniao: calibrando/erro)
+  - manda o rumo do giroscopio:          {"t":"yaw","psi":graus,"r":graus/s}  (~20 Hz; + = direita;
+    psi = integrador SEM limite, so o delta importa; r = giro filtrado sem vies)
+  - em src=visao: {"t":"drive","v","s"} a cada frame (v pela visao, s pelo HeadingHold) e, com
+    OBSTACULO, {"t":"avoid","deg":<setor mais livre>}; o ESP32 faz a manobra.
+  - think: so narra a VISAO (estado, conf, setores). As decisoes aparecem no "state" do ESP32.
 
-Ou direto do Python (StreamRunner / replay_main):
-    import brain; brain.start(); ...; brain.step("LIVRE", 0.8, "chao livre"); ...; brain.stop()
+Uso (Kotlin): start() no onResume; step(json) por frame; on_gyro(rate) do giroscopio; stop() no onPause;
+pop_calibrate() por frame; status() para a faixa do app.
 
-Logica:
-    - motivacao (goal) vem do visor: "explorar"/"reto" -> anda; "parar"/"nenhuma"/None -> parado
-    - ao chegar motivacao nova: mode phone + arm (UMA vez; arm repetido reinicia os 3 s)
-    - LIVRE -> V_FREE, INCERTO -> V_SLOW, OBSTACULO/desconhecido -> 0
-    - OBSTACULO -> pede {"t":"avoid"}: o ESP32 executa o desvio com o sensor e devolve o controle
-    - se o celular cair, o ESP32 segue sozinho no modo sensor (firmware 0.3, fallback_auto)
-    - drive a cada frame (o ESP32 para sozinho se nao chegar nada em 500 ms)
-    - think so quando o estado muda ou a cada THINK_MIN_S
-Rumo: control/heading.py segura a linha reta com o giroscopio (Kotlin -> on_gyro); ver HeadingConfig.
-v1: "reto" e "explorar" se comportam igual (andar reto ate obstaculo). Parametros abaixo.
+Motivacao: o visor manda {"t":"goal","g":"explorar","src":"sensor"|"visao"} (o ESP32 repassa).
+  src=sensor -> mode auto  (o ESP32 anda so com o sensor; sem drive do celular)
+  src=visao  -> mode phone (visao + rumo; reflexos e manobras no ESP32)
+  src ausente -> sensor (o mais seguro). O brain reage a mudanca de goal OU de src.
+  O brain NUNCA arma o carro (quem arma e o ESP32 ao receber o goal, ou o botao BOOT);
+  na reconexao do WS ele so reenvia o mode do src atual.
+  goal "parar"/"nenhuma"/None, ou ESP32 desarmado: zera goal/src lembrados, rumo e integrador.
+Parametros abaixo [DEMO]; o rumo esta em config.HeadingConfig.
 """
 import json
 import threading
 import time
+
 import viz
 from config import Config
-from control.heading import HeadingHold
+from control.heading import HeadingHold, YawIntegrator
 from tools.ws_link import WsLink
 
 # ----------------------------- parametros [DEMO] -----------------------------
@@ -33,32 +35,50 @@ URL = "ws://192.168.4.1:81/"
 V_FREE = 0.35        # velocidade em LIVRE (normalizada 0..1, o ESP32 aplica pwm_min/pwm_max)
 V_SLOW = 0.15        # velocidade em INCERTO
 THINK_MIN_S = 0.5    # no maximo 2 pensamentos/s se o estado nao mudar
-GOALS_MOVE = ("explorar", "reto")
-# explorar = so o sensor (ESP32 em modo auto: varre, desvia e anda sozinho); o celular nao dirige.
-SENSOR_ONLY_GOALS = ("explorar",)
-AVOID_EVERY_S = 2.0   # OBSTACULO: pede desvio ao ESP32 (ele usa o sensor no servo) no maximo a cada 2 s
+GOALS_MOVE = ("explorar",)
+SRC_TO_MODE = {"sensor": "auto", "visao": "phone"}
+VIS_EVERY_S = 0.1    # opiniao da visao ao ESP32 (~10 Hz)
+YAW_EVERY_S = 0.05   # rumo ao ESP32 (~20 Hz)
+AVOID_EVERY_S = 2.0  # OBSTACULO em src=visao: pede desvio no maximo a cada 2 s
 VIZ_ANNOUNCE_S = 3.0  # reanuncia o endereco do stream (visor que conecta depois tambem recebe)
+MAX_MSG = 160        # lineBuf do firmware: nenhuma mensagem pode passar disso (bytes)
+SECTOR_DEGS = (-30, -15, 0, 15, 30)
+AVOID_DEGS = (-30, -15, 15, 30)   # o ESP32 varre estas posicoes (centro e o obstaculo)
+
+_STATES = ("LIVRE", "INCERTO", "OBSTACULO")
 
 # ----------------------------------- estado ----------------------------------
+_clock = time.monotonic          # trocado nos testes
 _link = None
 _lock = threading.Lock()
-_last_goal = None
+_last_key = None                 # (goal, src) ja tratado
+_last_conn_seq = 0
 _last_state = None
-_last_think_t = 0.0
-_last_viz_t = 0.0
-_last_avoid_t = 0.0
-_calib_seen = 0                  # quantos "calibrar" ja foram entregues ao app
-_heading = HeadingHold(Config().heading)   # rumo em linha reta (giroscopio do celular)
+_armed_prev = False
+_last_think_t = _last_viz_t = _last_vis_t = _last_yaw_t = _last_avoid_t = 0.0
+_calib_seen = 0
+_last_vis = {"ok": False, "s": None, "state": None, "conf": None}
+_oversize = 0                    # mensagens descartadas por passarem de MAX_MSG (deve ficar em 0)
+_heading = HeadingHold(Config().heading)      # rumo em reta (so src=visao)
+_yaw = YawIntegrator(Config().heading)        # psi sem limite para o ESP32 (sempre)
+_logger = None                                # log local (bloco 5)
+
+
+def _reset_motion():
+    _heading.reset()
+    _yaw.reset()
 
 
 def start(url=URL):
     """Abre a conexao (thread propria com reconexao). Pode chamar mais de uma vez."""
-    global _link, _calib_seen
+    global _link, _calib_seen, _last_key, _last_conn_seq
     with _lock:
         if _link is None:
-            _link = WsLink(url).start()
+            _link = WsLink(url, on_msg=_on_msg).start()
             _calib_seen = 0
-            _heading.reset()
+            _last_key = None
+            _last_conn_seq = 0
+            _reset_motion()
         if viz is not None:
             viz.start()
     return True
@@ -66,7 +86,7 @@ def start(url=URL):
 
 def stop():
     """Para o carro e fecha a conexao."""
-    global _link, _last_goal
+    global _link, _last_key
     with _lock:
         if _link is not None:
             _link.drive(0, 0)
@@ -76,20 +96,62 @@ def stop():
             _link = None
         if viz is not None:
             viz.stop()
-        _last_goal = None
-        _heading.reset()
+        _last_key = None
+        _reset_motion()
+
+
+def _on_msg(m):
+    """Toda mensagem do ESP32 (thread do WsLink). Gancho do log local."""
+    lg = _logger
+    if lg is not None:
+        lg.recv(m)
+
+
+def _send(obj):
+    """Envia compacto; garante <= MAX_MSG bytes (corta o texto de think; o resto e descartado)."""
+    global _oversize
+    link = _link
+    if link is None:
+        return False
+    s = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    if len(s.encode("utf-8")) > MAX_MSG:
+        if obj.get("t") == "think" and isinstance(obj.get("msg"), str):
+            o = dict(obj)
+            while len(json.dumps(o, separators=(",", ":"), ensure_ascii=False).encode("utf-8")) > MAX_MSG and o["msg"]:
+                o["msg"] = o["msg"][:-4] if len(o["msg"]) > 4 else ""
+            obj = o
+        else:
+            _oversize += 1
+            return False
+    ok = link.send(obj)
+    lg = _logger
+    if lg is not None:
+        lg.sent(obj)
+    return ok
 
 
 def on_gyro(rate_dps):
-    """Kotlin, a cada amostra do giroscopio (~50 Hz): giro em graus/s, > 0 = para a DIREITA.
-    Ja projetado no eixo vertical (independe de como o celular esta montado)."""
-    _heading.feed_rate(float(rate_dps), time.monotonic())
+    """Kotlin, a cada amostra do giroscopio (~50 Hz): giro em graus/s, > 0 = para a DIREITA
+    (ja projetado no eixo vertical). Alimenta o rumo e o integrador; manda {"t":"yaw"} a ~20 Hz."""
+    global _last_yaw_t
+    now = _clock()
+    r = float(rate_dps)
+    _heading.feed_rate(r, now)
+    link = _link
+    esp = (link.state if link is not None else None) or {}
+    armed = bool(esp.get("armed"))
+    still = (not armed) or (abs(float(esp.get("L", 1.0))) < 0.02 and abs(float(esp.get("R", 1.0))) < 0.02)
+    if not armed:
+        _yaw.reset()                       # sem rumo de referencia enquanto desarmado (mantem o vies)
+    _yaw.feed_rate(r, now, still)
+    if link is not None and link.connected and now - _last_yaw_t >= YAW_EVERY_S:
+        _last_yaw_t = now
+        _send({"t": "yaw", "psi": round(_yaw.psi, 1), "r": round(_yaw.rate, 1)})
 
 
 def pop_calibrate():
-    """Kotlin, a cada frame: True UMA vez por comando "calibrar" vindo do visor (botao Explorar).
-    O app entao chama StreamRunner.recalibrate(); enquanto aprende o chao o estado da visao
-    nao e LIVRE/INCERTO, entao step() manda v=0 (o carro fica parado)."""
+    """Kotlin, a cada frame: True UMA vez por comando "calibrar" vindo do visor.
+    O app entao chama StreamRunner.recalibrate(); enquanto calibra, info.ok = False (o ESP32 ignora)."""
     global _calib_seen
     with _lock:
         link = _link
@@ -97,135 +159,154 @@ def pop_calibrate():
             return False
         _calib_seen = link.calib_seq
         _heading.reset()
-        link.think("calibrar: aprendendo a cor do chao (carro parado)")
+        _send({"t": "think", "msg": "calibrar: aprendendo a cor do chao"})
         return True
 
 
-_STATES = ("OBSTACULO", "INCERTO", "LIVRE")   # ordem: o mais conservador ganha
-_KEYS_STATE = ("state", "estado", "decision", "decisao")
-_KEYS_CONF = ("conf", "confidence", "prob_mean")
+# --------------------------- leitura EXPLICITA da visao ---------------------------
+def _fold(txt):
+    return (str(txt).strip().upper().replace("Á", "A").replace("Ã", "A").replace("É", "E")
+            .replace("Ó", "O").replace("Ê", "E"))
 
 
-def _maybe_json(x):
-    """String JSON (retorno do process_rgba_frame) -> dict; o resto passa igual."""
-    if isinstance(x, str) and x.lstrip().startswith("{"):
+def _parse(estado):
+    """JSON do process_rgba_frame (str/dict) ou estado puro ("LIVRE") -> dict normalizado:
+    {"state": LIVRE|INCERTO|OBSTACULO|None, "conf": 0..1|None, "ok": bool, "sectors": [5 ints]|None}.
+    NUNCA procura palavras dentro de textos livres (why etc.): so o campo vision_state (igualdade exata)."""
+    d = estado
+    if isinstance(d, str) and d.lstrip().startswith("{"):
         try:
-            d = json.loads(x)
+            d = json.loads(d)
         except ValueError:
-            return x
-        if isinstance(d, dict):
-            for k in ("decision", "decisao", "result"):     # aceita um nivel aninhado
-                if isinstance(d.get(k), dict):
-                    merged = dict(d)
-                    merged.update(d[k])
-                    return merged
-            return d
-    return x
-
-
-def _get(obj, keys):
-    for k in keys:
-        if isinstance(obj, dict) and obj.get(k) is not None:
-            return obj[k]
-        v = getattr(obj, k, None)
-        if v is not None and not callable(v):
-            return v
-    return None
+            d = None
+    st = conf = sectors = None
+    ok = False
+    if isinstance(d, dict):
+        raw = d.get("vision_state")
+        st = _fold(raw) if isinstance(raw, str) else None
+        r = d.get("r")
+        if isinstance(r, (int, float)) and not isinstance(r, bool):
+            conf = max(0.0, min(1.0, float(r)))
+        sec = d.get("sectors")
+        if isinstance(sec, (list, tuple)) and len(sec) == 5 and all(isinstance(x, (int, float)) for x in sec):
+            sectors = [int(max(0, min(100, round(x)))) for x in sec]
+        ok = bool(d.get("ok")) if "ok" in d else d.get("phase") == "RUN"
+    elif isinstance(d, str):
+        st, ok = _fold(d), True
+    if st not in _STATES:
+        st, ok = None, False
+    return {"state": st, "conf": conf, "ok": ok, "sectors": sectors}
 
 
 def _norm_state(estado):
-    """Aceita 'LIVRE', dict/objeto com state/estado/decision, ou qualquer coisa cujo texto
-    contenha LIVRE/INCERTO/OBSTACULO (ex.: o retorno do StreamRunner)."""
-    if estado is None:
-        return None
-    estado = _maybe_json(estado)
-    if not isinstance(estado, str):
-        inner = _get(estado, _KEYS_STATE)
-        estado = inner if inner is not None else estado
-    txt = str(estado).upper()
-    for s in _STATES:
-        if s in txt:
-            return s
-    return None
+    """Compat: so o estado (LIVRE/INCERTO/OBSTACULO ou None)."""
+    return _parse(estado)["state"]
+
+
+def _free_sector_deg(sectors):
+    """Angulo (entre os que o ESP32 varre) do setor mais livre; empate -> menor |angulo|, depois esquerda."""
+    best = None
+    for deg in AVOID_DEGS:
+        v = sectors[SECTOR_DEGS.index(deg)]
+        key = (-v, abs(deg), deg)
+        if best is None or key < best[0]:
+            best = (key, deg)
+    return best[1]
+
+
+def _resolve(link):
+    """(goal, src) efetivos: so 'explorar' tem src; ausente -> 'sensor'."""
+    goal = link.goal
+    if goal in GOALS_MOVE:
+        src = link.src if link.src in SRC_TO_MODE else "sensor"
+        return goal, src
+    return goal, None
 
 
 def step(estado, conf=None, msg=None):
-    """Chamar a cada frame. Retorna (v, s) enviado, para debug."""
-    global _last_goal, _last_state, _last_think_t, _last_viz_t, _last_avoid_t
+    """Chamar a cada frame (depois da visao). Retorna (v, s) enviado em src=visao, senao (0, 0)."""
+    global _armed_prev, _last_key, _last_conn_seq, _last_state, _last_think_t, _last_viz_t, _last_vis_t, _last_avoid_t
     with _lock:
         link = _link
         if link is None or not link.connected:
             return (0.0, 0.0)
-
-        st = _norm_state(estado)
-        src = _maybe_json(estado)
-        if conf is None and src is not None and not isinstance(src, str):
-            conf = _get(src, _KEYS_CONF)
-        if msg is None and isinstance(src, dict):
-            msg = src.get("why") or src.get("reason") or src.get("motivo")
-        goal = link.goal
-
-        # motivacao nova -> prepara o ESP32 (uma vez)
-        if goal != _last_goal:
-            _last_goal = goal
-            if goal in SENSOR_ONLY_GOALS:
-                link.mode("auto")
-                link.arm(True)
-                _heading.reset()
-                link.think(f"motivacao '{goal}': so sensor (ESP32 em auto), armando")
-            elif goal in GOALS_MOVE:
-                link.mode("phone")
-                link.arm(True)
-                link.think(f"motivacao '{goal}': armando")
-            else:
-                link.think(f"motivacao '{goal}': parado")
-
-        # decisao -> movimento
-        if goal not in GOALS_MOVE:
-            v = 0.0
-        elif st == "LIVRE":
-            v = V_FREE
-        elif st == "INCERTO":
-            v = V_SLOW
-        else:                      # OBSTACULO ou desconhecido: conservador
-            v = 0.0
+        now = _clock()
+        p = _parse(estado)
+        st, sectors = p["state"], p["sectors"]
+        if conf is None:
+            conf = p["conf"]
         esp = link.state or {}
-        sensor_only = goal in SENSOR_ONLY_GOALS
-        if sensor_only:
-            s = 0.0                # o ESP32 decide tudo; nada de drive/avoid/rumo do celular
-            _heading.reset()
-        else:
-            # rumo so engata com o carro ARMADO (durante a contagem o carro e manuseado: psi/vies sujos)
-            s, hinfo = _heading.update(time.monotonic(), v if esp.get("armed") else 0.0, 0.0)
+        goal, src = _resolve(link)
+        armed = bool(esp.get("armed"))
+        _last_vis.update(ok=p["ok"], s=sectors, state=st, conf=conf)
+
+        # parar / sem motivacao / desarmado: esquece goal/src e zera rumo (nao rearma nada)
+        if goal not in GOALS_MOVE or not armed:
+            if goal not in GOALS_MOVE or _armed_prev:
+                _last_key = None
+            _reset_motion()
+        _armed_prev = armed
+
+        # motivacao ou fonte nova -> so manda o MODE (quem arma e o ESP32)
+        key = (goal, src)
+        if goal in GOALS_MOVE and (key != _last_key or link.conn_seq != _last_conn_seq):
+            if key != _last_key:
+                _heading.reset()
+            _last_key, _last_conn_seq = key, link.conn_seq
+            _send({"t": "mode", "m": SRC_TO_MODE[src]})
+            _send({"t": "think", "msg": f"motivacao '{goal}' fonte '{src}'"})
+        _last_conn_seq = link.conn_seq
+
+        # opiniao da visao ao ESP32 (~10 Hz); ok=0 = sem opiniao
+        if now - _last_vis_t >= VIS_EVERY_S:
+            _last_vis_t = now
+            use = p["ok"] and sectors is not None
+            _send({"t": "vis", "ok": 1 if use else 0, "s": sectors if use else [0, 0, 0, 0, 0]})
+
+        v = s = 0.0
+        if goal in GOALS_MOVE and src == "visao":
+            v = V_FREE if st == "LIVRE" else (V_SLOW if st == "INCERTO" else 0.0)
+            s, _ = _heading.update(now, v if armed else 0.0, 0.0)
             link.drive(v, s)
+            lg = _logger
+            if lg is not None:
+                lg.sent({"t": "drive", "v": round(v, 3), "s": round(s, 3)})
+            if (st == "OBSTACULO" and armed and esp.get("st") != "DESVIO"
+                    and now - _last_avoid_t >= AVOID_EVERY_S):
+                _last_avoid_t = now
+                o = {"t": "avoid"}
+                if sectors is not None:
+                    o["deg"] = _free_sector_deg(sectors)
+                _send(o)
 
-        # obstaculo: o ESP32 faz o desvio (para, olha L/R, re, curva) e devolve o controle
-        now = time.time()
-        if (goal in GOALS_MOVE and not sensor_only and st == "OBSTACULO" and esp.get("armed")
-                and esp.get("st") != "DESVIO" and now - _last_avoid_t >= AVOID_EVERY_S):
-            _last_avoid_t = now
-            link.send({"t": "avoid"})
-            link.think("obstaculo na visao: pedindo desvio ao ESP32", state=st)
-
-        if viz is not None and now - _last_viz_t >= VIZ_ANNOUNCE_S:
+        if now - _last_viz_t >= VIZ_ANNOUNCE_S:
             _last_viz_t = now
             u = viz.url()
             if u:
-                link.send({"t": "think", "viz": u})
+                _send({"t": "think", "viz": u})
 
-        # pensamento (limitado)
+        # pensamento: SO a visao (estado, conf, setores)
         if st != _last_state or now - _last_think_t >= THINK_MIN_S:
             _last_state = st
             _last_think_t = now
-            extra = {"state": st or "-"}
+            o = {"t": "think", "msg": msg or _vision_text(st, sectors, p["ok"]), "state": st or "-"}
             if conf is not None:
                 try:
-                    extra["conf"] = round(float(conf), 2)
+                    o["conf"] = round(float(conf), 2)
                 except (TypeError, ValueError):
                     pass
-            texto = msg or (f"{st or '?'} -> sensor (ESP32 auto)" if sensor_only else f"{st or '?'} -> v={v:.2f}")
-            link.think(str(texto)[:120], **extra)
+            _send(o)
+        lg = _logger
+        if lg is not None:
+            lg.frame(now, p, goal, src, v, s)
         return (v, s)
+
+
+def _vision_text(st, sectors, ok):
+    if not ok:
+        return "visao sem opiniao (calibrando)"
+    sec = " ".join(str(x) for x in sectors) if sectors else "-"
+    return f"visao {st}  setores(-30..+30) {sec}"
 
 
 def status():
@@ -236,8 +317,11 @@ def status():
     if not link.connected:
         return "brain: sem conexao com o carro (rede CARRINHO? dados moveis desligados?)"
     stt = link.state or {}
+    goal, src = _resolve(link)
     h = _heading.last
-    rumo = (f" | rumo: giro={h.get('rate', 0):+.0f}\u00b0/s psi={h.get('psi', 0):+.1f}\u00b0 "
-            f"corr={h.get('s_corr', 0):+.2f}" if h.get("on") else f" | rumo: {h.get('why', '-')}")
-    return (f"conectado | goal={link.goal} | armado={stt.get('armed')} | "
-            f"frente={stt.get('c')} cm{rumo}")
+    rumo = (f" | rumo: giro={h.get('rate', 0):+.0f}°/s corr={h.get('s_corr', 0):+.2f}"
+            if h.get("on") else f" | rumo: {h.get('why', '-')}")
+    vs = _last_vis
+    return (f"conectado | goal={goal} fonte={src} | armado={stt.get('armed')} | "
+            f"frente={stt.get('c')} cm | visao={vs['state']} ok={vs['ok']} | "
+            f"psi={_yaw.psi:+.0f}°{rumo}")

@@ -32,6 +32,8 @@ class WsLink:
         self.state = {}                 # ultimo {"t":"state"}
         self.ranges = {}                # deg -> (cm|None, t)
         self.goal = None                # ultima motivacao
+        self.src = None                 # fonte do goal: "sensor" | "visao" (None se o visor nao mandou)
+        self.conn_seq = 0               # +1 a cada (re)conexao aberta
         self.calib_seq = 0              # +1 a cada {"t":"calibrar"} (botao Explorar do visor)
         self.connected = False
         self._ws = None
@@ -64,6 +66,8 @@ class WsLink:
                 time.sleep(1.0)
 
     def _set_conn(self, ok):
+        if ok:
+            self.conn_seq += 1
         self.connected = ok
 
     def _on_message(self, ws, text):
@@ -78,6 +82,7 @@ class WsLink:
             self.ranges[m.get("deg")] = (m.get("cm"), time.time())
         elif t == "goal":
             self.goal = m.get("g")
+            self.src = m.get("src")
         elif t == "calibrar":
             self.calib_seq += 1
         if self.on_msg:
@@ -102,6 +107,12 @@ class WsLink:
 
     def arm(self, on=True):
         return self.send({"t": "arm", "on": bool(on)})
+
+    def vis(self, ok, sectors):
+        return self.send({"t": "vis", "ok": 1 if ok else 0, "s": [int(x) for x in sectors]})
+
+    def yaw(self, psi, rate):
+        return self.send({"t": "yaw", "psi": round(float(psi), 1), "r": round(float(rate), 1)})
 
     def mode(self, m):
         return self.send({"t": "mode", "m": m})
