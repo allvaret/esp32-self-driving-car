@@ -80,3 +80,18 @@ def free_space_vector(mask, strip_w=8, run=5, min_floor_frac = 0.5):
 
     return free / height
 
+
+# Setores alinhados ao servo do sensor: -30, -15, 0, +15, +30 graus (esquerda -> direita da IMAGEM,
+# que e a esquerda -> direita do CARRO: frame_from_rgba ja devolve a imagem "em pe").
+# 40 faixas de 8 px (320 px) = 5 setores de 8 faixas; FOV horizontal ~74 graus => ~14,8 graus por setor.
+SECTOR_ANGLES = (-30, -15, 0, 15, 30)
+
+
+def free_sectors(vec, n=5, pct=20):
+    """free_space_vector (0..1 por faixa) -> n ints 0..100, um por setor (esq -> dir).
+    Valor do setor = percentil `pct` das faixas do setor (pessimista: uma faixa bloqueada ja pesa)."""
+    v = np.asarray(vec, float)
+    per = len(v) // n
+    if per < 1:
+        raise ValueError(f"free_sectors: {len(v)} faixas para {n} setores")
+    return [int(round(100.0 * float(np.percentile(v[i * per:(i + 1) * per], pct)))) for i in range(n)]

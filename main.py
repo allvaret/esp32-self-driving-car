@@ -16,7 +16,7 @@ from config import Config
 from vision import edge_probe
 from vision.coverage_log import WARMUP, coverage_row, floor_prob
 from vision.decision import DecisionMaker
-from vision.ground import calibrate_thr, floor_mask, learn_floor_hist
+from vision.ground import calibrate_thr, floor_mask, free_sectors, free_space_vector, learn_floor_hist
 import viz
 
 
@@ -83,7 +83,7 @@ class VisionRunner:
             self._buf.append(frame_bgr)
             if len(self._buf) >= WARMUP + 1:
                 self._learn()
-            info = {"phase": "WARMUP", "ok": False, "vision_state": "-", "r": None,
+            info = {"phase": "WARMUP", "ok": False, "vision_state": "-", "r": None, "sectors": None,
                     "edge_h_cen": None, "edge_cov": None, "edge_near": False}
         else:
             mask = floor_mask(frame_bgr, self.hist, self.thr)
@@ -97,15 +97,16 @@ class VisionRunner:
                 feats, _, _ = edge_probe.edge_features(_edge_gray(frame_bgr))
                 e_h, e_cov = feats["h_cen"], feats["cov"]
                 near = edge_probe.edge_is_near(e_h, e_cov, self.cfg.control)
+            sectors = free_sectors(free_space_vector(mask))       # 5 setores 0..100 (-30..+30 graus)
             info = {"phase": "RUN", "ok": True, "vision_state": vstate.value, "r": self.dm.r,
-                    "edge_h_cen": e_h, "edge_cov": e_cov, "edge_near": near}
+                    "sectors": sectors, "edge_h_cen": e_h, "edge_cov": e_cov, "edge_near": near}
         info.update({"t": round(t, 3), "n": self._n,
                      "proc_ms": (time.perf_counter() - t_in) * 1000})
         self._n += 1
         return info
 
 
-LOG_FIELDS = ["wall_s", "t", "n", "phase", "ok", "vision_state", "r", "edge_h_cen", "edge_cov",
+LOG_FIELDS = ["wall_s", "t", "n", "phase", "ok", "vision_state", "r", "sectors", "edge_h_cen", "edge_cov",
               "edge_near", "why", "conv_ms", "proc_ms", "w", "h", "rot"]
 
 
@@ -145,7 +146,7 @@ class StreamRunner:
             frame = frame_from_rgba(data, width, height, row_stride, rotation)
             conv_ms = (time.perf_counter() - t0) * 1000
             if time.monotonic() - self._t_start < self.settle_s:   # auto-exposicao estabilizando
-                info = {"phase": "SETTLE", "ok": False, "vision_state": "-", "r": None,
+                info = {"phase": "SETTLE", "ok": False, "vision_state": "-", "r": None, "sectors": None,
                         "why": "estabilizando exposicao", "proc_ms": 0.0}
             else:
                 info = self.runner.feed(frame)
@@ -155,7 +156,7 @@ class StreamRunner:
             return json.dumps(info, default=_jsonable)
         except Exception as e:
             import traceback
-            return json.dumps({"phase": "ERROR", "ok": False, "vision_state": "-", "why": f"{type(e).__name__}: {e}",
+            return json.dumps({"phase": "ERROR", "ok": False, "vision_state": "-", "r": None, "sectors": None, "why": f"{type(e).__name__}: {e}",
                                "trace": traceback.format_exc()[-1200:]})
 
     def _log(self, info):
