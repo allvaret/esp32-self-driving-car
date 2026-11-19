@@ -1,4 +1,10 @@
-"""control/controller.py - fusao visao + sensor e maquina de estados do V1 (3 estados).
+"""control/controller.py - CONGELADO: referencia v1, NAO usado ao vivo.
+
+Decisao do Caminho 1: o ESP32 (car_firmware.ino) e o UNICO executor de manobras; o S9 manda so a
+opiniao da visao e o rumo do giroscopio (brain.py). Este arquivo fica como referencia da logica
+e e usado apenas por replay/, tools/bench_s9.py e testes. Nao importe no caminho ao vivo.
+
+fusao visao + sensor e maquina de estados do V1 (3 estados).
 
   FRENTE    : anda reto em v_cruise; sensor fica apontado ao centro (sentinela).
               (parado ate a 1a leitura assentada do sensor)
@@ -30,6 +36,7 @@ from enum import Enum
 from config import ControlConfig
 from control.hal import Drive
 from vision.decision import State as VState
+from vision.edge_probe import edge_is_near  # noqa: F401  (reexportado para replay/bench/testes)
 
 EPS = 1e-6
 STOP = Drive(0.0, 0.0)
@@ -45,11 +52,6 @@ class CState(Enum):
 class Vision:
     state: VState = VState.LIVRE
     edge_near: bool = False
-
-
-def edge_is_near(h_cen, cov, cfg=None):
-    cfg = cfg or ControlConfig()
-    return cov >= cfg.edge_cov_min and h_cen <= cfg.edge_near_h
 
 
 class Controller:

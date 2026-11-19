@@ -6,8 +6,8 @@ import tempfile
 
 from config import Config, ControlConfig, derive_maneuver_times
 from control.controller import CState, Controller, Vision
-from control.hal import (FAR_M, Drive, LinkDrive, LinkRangeHead, MemoryLink,
-                          MockRangeHead, Scenario)
+from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink
+from control.mocks import FAR_M, MockRangeHead, Scenario
 from vision.decision import State as V
 
 

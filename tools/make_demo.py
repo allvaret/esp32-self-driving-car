@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image
 
 from config import Config
-from main import Runner, iter_frames
+from replay.offline import Runner, iter_frames
 from vision.ground import floor_mask
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -23,7 +23,7 @@ import numpy as np
 
 from config import Config
 from control.controller import Controller, Vision, edge_is_near
-from control.hal import MockDriveLink, MockRangeHead, Scenario
+from control.mocks import MockDriveLink, MockRangeHead, Scenario
 from vision import edge_probe
 from vision.coverage_log import WARMUP, coverage_row, floor_prob
 from vision.decision import DecisionMaker

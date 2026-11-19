@@ -26,8 +26,6 @@ import cv2
 import numpy as np
 
 from config import Config
-from control.controller import Controller, Vision, edge_is_near
-from control.hal import MockRangeHead, Scenario
 from vision import edge_probe
 from vision.coverage_log import WARMUP, coverage_row, floor_prob
 from vision.decision import DecisionMaker
@@ -103,6 +101,8 @@ def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, bu
     thr, _ = calibrate_thr(buf[1:], hist) if len(buf) > 1 else (0.02, 0.0)
     setup_ms = (time.perf_counter() - t0) * 1000
 
+    from control.controller import Controller, Vision   # so bancada: import preguicoso (nao e caminho ao vivo)
+    from control.mocks import MockRangeHead, Scenario
     dm = DecisionMaker(cfg.decision)
     ctl = Controller(MockRangeHead(Scenario.constant(), noise_m=0.0), cfg.control)
     tm = {k: [] for k in STAGES}
@@ -135,7 +135,7 @@ def run_bench(video, max_frames=None, use_edges=True, cfg=None, threads=None, bu
         near = False
         if use_edges:
             feats, _, _ = edge_probe.edge_features(_edge_gray(frame))
-            near = edge_is_near(feats["h_cen"], feats["cov"], cfg.control)
+            near = edge_probe.edge_is_near(feats["h_cen"], feats["cov"], cfg.control)
         d = pc()
         ctl.update(t, Vision(vstate, near))
         e = pc()

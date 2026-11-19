@@ -44,6 +44,13 @@ CANNY_FIXED = None               # (lo, hi) fixos; None = automatico (--canny LO
 FEATS = ["h_left", "h_cen", "h_right", "cov", "dens", "str_cen"]
 
 
+def edge_is_near(h_cen, cov, cfg=None):
+    """Borda (rodape) perto: cobertura >= edge_cov_min e altura <= edge_near_h (config.ControlConfig)."""
+    from config import ControlConfig
+    cfg = cfg or ControlConfig()
+    return cov >= cfg.edge_cov_min and h_cen <= cfg.edge_near_h
+
+
 def resize_w(frame_bgr):
     h, w = frame_bgr.shape[:2]
     k = TARGET_W / w

@@ -43,5 +43,5 @@ Each entry is a problem I hit, what I chose, and the evidence in the repository.
 **Evidence:** `tools/bench_s9.py`; logs in `docs/logs/bench/`. On the PC, 8.5 ms per frame with 1 thread against 9.6 ms with 12. On the S9, 17.5 to 18.1 ms with 1, 2, 3 or 4 threads, so the extra threads buy nothing and one is used.
 
 ## 9. Keep experiments out of the run loop
-Optical flow (`vision/flow_probe.py`) was implemented and logged, then deferred: it did not solve the hardest case (the wall whose color is close to the floor's), so it stays in the repository as an experiment, not in the pipeline that drives the car.
+Optical flow was implemented and logged, then dropped: it did not solve the hardest case (the wall whose color is close to the floor's). The experiment file was removed from the repository (it was an exact copy of `edge_probe.py`); it is in the git history.
 

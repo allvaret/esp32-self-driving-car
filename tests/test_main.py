@@ -6,8 +6,9 @@ import tempfile
 import cv2
 import numpy as np
 
-from control.hal import Scenario
-from main import Runner, frame_from_rgba, run_source, summarize
+from control.mocks import Scenario
+from main import frame_from_rgba
+from replay.offline import Runner, run_source, summarize
 from tests.test_pipeline_smoke import synth_frame
 from vision.coverage_log import WARMUP
 

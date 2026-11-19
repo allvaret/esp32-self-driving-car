@@ -1,6 +1,7 @@
 """tools/android_entry.py - funcoes chamadas pelo app Android (Kotlin -> Python via Chaquopy).
 
-Mantenha este arquivo fino: a logica fica em vision/, control/, hardware/ e tools/bench_s9.py.
+Mantenha este arquivo fino: a logica fica em vision/, control/, main.py, brain.py e tools/bench_s9.py
+(o laco offline de run_main esta em replay/offline.py; mocks so sao importados dentro das funcoes).
 """
 
 
@@ -37,6 +38,7 @@ def bench(path, threads=0, use_edges=True, max_frames=150):
 
 
 def run_main(path, use_edges=True, max_frames=300):
-    """O 'for com frames' completo (visao + controller + sensor MOCK); devolve o resumo."""
-    import main
-    return main.run_text(path, use_edges=bool(use_edges), max_frames=int(max_frames))
+    """Bancada: 'for com frames' completo (visao + Controller v1 + sensor MOCK); devolve o resumo.
+    NAO e o caminho ao vivo (la o ESP32 e o executor)."""
+    from replay import offline          # import preguicoso: so a bancada usa (Controller + sensor MOCK)
+    return offline.run_text(path, use_edges=bool(use_edges), max_frames=int(max_frames))
