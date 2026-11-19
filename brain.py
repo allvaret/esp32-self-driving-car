@@ -34,6 +34,8 @@ V_FREE = 0.35        # velocidade em LIVRE (normalizada 0..1, o ESP32 aplica pwm
 V_SLOW = 0.15        # velocidade em INCERTO
 THINK_MIN_S = 0.5    # no maximo 2 pensamentos/s se o estado nao mudar
 GOALS_MOVE = ("explorar", "reto")
+# explorar = so o sensor (ESP32 em modo auto: varre, desvia e anda sozinho); o celular nao dirige.
+SENSOR_ONLY_GOALS = ("explorar",)
 AVOID_EVERY_S = 2.0   # OBSTACULO: pede desvio ao ESP32 (ele usa o sensor no servo) no maximo a cada 2 s
 VIZ_ANNOUNCE_S = 3.0  # reanuncia o endereco do stream (visor que conecta depois tambem recebe)
 
@@ -166,7 +168,12 @@ def step(estado, conf=None, msg=None):
         # motivacao nova -> prepara o ESP32 (uma vez)
         if goal != _last_goal:
             _last_goal = goal
-            if goal in GOALS_MOVE:
+            if goal in SENSOR_ONLY_GOALS:
+                link.mode("auto")
+                link.arm(True)
+                _heading.reset()
+                link.think(f"motivacao '{goal}': so sensor (ESP32 em auto), armando")
+            elif goal in GOALS_MOVE:
                 link.mode("phone")
                 link.arm(True)
                 link.think(f"motivacao '{goal}': armando")
@@ -182,13 +189,19 @@ def step(estado, conf=None, msg=None):
             v = V_SLOW
         else:                      # OBSTACULO ou desconhecido: conservador
             v = 0.0
-        s, hinfo = _heading.update(time.monotonic(), v, 0.0)   # corrige o desvio dos motores
-        link.drive(v, s)
+        esp = link.state or {}
+        sensor_only = goal in SENSOR_ONLY_GOALS
+        if sensor_only:
+            s = 0.0                # o ESP32 decide tudo; nada de drive/avoid/rumo do celular
+            _heading.reset()
+        else:
+            # rumo so engata com o carro ARMADO (durante a contagem o carro e manuseado: psi/vies sujos)
+            s, hinfo = _heading.update(time.monotonic(), v if esp.get("armed") else 0.0, 0.0)
+            link.drive(v, s)
 
         # obstaculo: o ESP32 faz o desvio (para, olha L/R, re, curva) e devolve o controle
-        esp = link.state or {}
         now = time.time()
-        if (goal in GOALS_MOVE and st == "OBSTACULO" and esp.get("armed")
+        if (goal in GOALS_MOVE and not sensor_only and st == "OBSTACULO" and esp.get("armed")
                 and esp.get("st") != "DESVIO" and now - _last_avoid_t >= AVOID_EVERY_S):
             _last_avoid_t = now
             link.send({"t": "avoid"})
@@ -210,7 +223,7 @@ def step(estado, conf=None, msg=None):
                     extra["conf"] = round(float(conf), 2)
                 except (TypeError, ValueError):
                     pass
-            texto = msg or f"{st or '?'} -> v={v:.2f}"
+            texto = msg or (f"{st or '?'} -> sensor (ESP32 auto)" if sensor_only else f"{st or '?'} -> v={v:.2f}")
             link.think(str(texto)[:120], **extra)
         return (v, s)
 

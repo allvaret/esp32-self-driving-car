@@ -53,7 +53,8 @@ class HeadingHold:
                 return
             dt = min(dt, c.max_dt_s)                 # amostra atrasada nao vira salto de psi
             a = dt / (c.rate_tau_s + dt)             # filtro passa-baixa de 1a ordem
-            if self._t_still is not None and t - self._t_still >= c.bias_still_s:
+            if (self._t_still is not None and t - self._t_still >= c.bias_still_s
+                    and abs(rate_dps - self._bias) <= c.bias_gate_dps):   # mao mexendo no carro != vies
                 self._bias += (rate_dps - self._bias) * min(1.0, dt / c.bias_tau_s)
             r = rate_dps - self._bias
             self._r += a * (r - self._r)

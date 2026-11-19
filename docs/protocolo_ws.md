@@ -29,3 +29,9 @@
 ## Mensagens que o ESP32 emite (serial + WebSocket)
 `hello`, `state` (a cada 500 ms), `range` (cada leitura; no modo auto so com clientes WS),
 `log`, `cfg_ok`, `pong`, e os `goal`/`think` repassados. Ao conectar, cada cliente recebe o `goal` atual.
+
+`scan` e o diario do servo nas manobras de desvio (guardado na RTC; reenviado com `"replay":1` a quem conecta,
+se o ESP32 nao ficou sem energia): `{"k":"aim","deg":-45}` (ordem ao servo),
+`{"k":"olha","deg":-45,"got":1,"cm":38.1}` (`cm:null` com `got:1` = sem eco/livre; `got:0` = estourou o tempo, sem leitura) e
+`{"k":"decide","L":38.1,"R":50.0,"side":1}` (notas E/D e lado escolhido; `side` -1 esquerda, +1 direita, 0 sem lado).
+`n` = sequencia, `boot` = numero do boot, `ms` = uptime em ms.

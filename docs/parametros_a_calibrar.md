@@ -30,9 +30,9 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 
 | Parâmetro | Valor atual | Status | Como obter |
 |---|---|---|---|
-| `control.d_stop_m` | 0,50 m | DEMO | `d_stop ≥ v_cruise[m/s] · (latência visão + comunicação + ciclo do sensor) + frenagem + margem`. |
-| `control.d_clear_m` | 1,00 m | DEMO | Distância a partir da qual uma leitura válida "refuta" a visão. Escolher com base no alcance confiável medido. |
-| `control.none_score_m` | 0,50 m | DEMO | Valor dado a um lado sem eco ao escolher a curva. Revisar com a taxa de "sem eco" medida por tipo de superfície. |
+| `control.d_stop_m` | 0,30 m | DEMO | `d_stop ≥ v_cruise[m/s] · (latência visão + comunicação + ciclo do sensor) + frenagem + margem`. |
+| `control.d_clear_m` | 0,60 m | DEMO | Distância a partir da qual uma leitura válida "refuta" a visão. Escolher com base no alcance confiável medido. |
+| `control.none_score_m` | 0,45 m | DEMO | Valor dado a um lado sem eco ao escolher a curva. Revisar com a taxa de "sem eco" medida por tipo de superfície. |
 | `control.scan_deg` | 45° | DEMO | Ângulo da olhada lateral. Deve ficar próximo do ângulo girado na curva (`turn_s`). |
 | `control.look_timeout_s` | 1,0 s | DEMO | Maior que o tempo de assentamento do servo medido. |
 | Tempo de assentamento do servo (`MockRangeHead.settle_s`) | 0,15 s | MEDIR | Cronometrar de `aim()` até a leitura estável, para -45°, 0° e +45°. |

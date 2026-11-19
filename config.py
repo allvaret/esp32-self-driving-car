@@ -19,9 +19,9 @@ from typing import Optional, Tuple
 @dataclass
 class ControlConfig:
     # --- distancias do sensor (m) ---
-    d_stop_m: float = 0.50        # sensor central mais perto -> DESVIO. Derivar: v*(latencia)+frenagem+margem
-    d_clear_m: float = 1.00       # leitura valida mais longe "refuta" a visao
-    none_score_m: float = 0.50    # valor de um lado SEM eco ao escolher a curva (> perto, < livre)
+    d_stop_m: float = 0.30        # sensor central mais perto -> DESVIO. Derivar: v*(latencia)+frenagem+margem
+    d_clear_m: float = 0.60       # leitura valida mais longe "refuta" a visao
+    none_score_m: float = 0.45    # valor de um lado SEM eco ao escolher a curva (> perto, < livre)
     # --- velocidades normalizadas [0, 1] ---
     v_cruise: float = 0.5
     v_slow: float = 0.2
@@ -80,6 +80,7 @@ class HeadingConfig:
     max_dt_s: float = 0.1         # amostra atrasada nao integra mais que isso
     bias_still_s: float = 0.5     # parado ha X s -> estima o vies do giroscopio
     bias_tau_s: float = 1.0
+    bias_gate_dps: float = 5.0    # so aceita amostra parada dentro de +-X graus/s do vies atual (ignora manuseio)
 
 
 @dataclass

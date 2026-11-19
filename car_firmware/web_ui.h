@@ -96,6 +96,13 @@ function handle(m){
     if(m.why&&m.why!==lastWhy)addLog('[esp32] '+m.why,'var(--wa)');lastWhy=m.why||'';
   }else if(m.t==='range'){
     pts[Math.round(m.deg/5)*5]={cm:m.cm,t:Date.now()};
+  }else if(m.t==='scan'){
+    const r=m.replay?'  (reenviado, boot '+m.boot+', ms '+m.ms+')':'';
+    if(m.k==='aim')addLog('[servo] vai para '+m.deg+'°'+r,'var(--ac)');
+    else if(m.k==='olha'){
+      if(m.got&&!m.replay)pts[Math.round(m.deg/5)*5]={cm:m.cm,t:Date.now()};
+      addLog('[servo] '+m.deg+'°: '+(!m.got?'SEM LEITURA (estourou o tempo)':(m.cm==null?'livre (sem eco)':m.cm.toFixed(0)+' cm'))+r,m.got?'var(--ac)':'var(--er)');
+    }else if(m.k==='decide')addLog('[servo] nota esquerda '+m.L.toFixed(0)+' | direita '+m.R.toFixed(0)+' -> '+(m.side<0?'curva p/ esquerda':m.side>0?'curva p/ direita':'sem lado (re maior)')+r,'var(--wa)');
   }else if(m.t==='think'){
     if(m.viz&&m.viz!==vizUrl){vizUrl=m.viz;$('viz').src=m.viz+'?'+Date.now();}
     if(m.state)$('vis').textContent='visao: '+m.state+(m.conf!=null?' ('+Math.round(m.conf*100)+'%)':'');

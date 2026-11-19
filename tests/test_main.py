@@ -28,7 +28,7 @@ def test_warmup_is_stopped_then_runs():
 
 
 def test_sensor_scenario_drives_the_controller():
-    sc = Scenario([0, 2.0, 2.1, 100], [2.0, 2.0, 0.3, 0.3], [2.0] * 4, [0.4] * 4)
+    sc = Scenario([0, 2.0, 2.1, 100], [2.0, 2.0, 0.2, 0.2], [2.0] * 4, [0.2] * 4)
     rows = run_source(_frames_dir(), scenario=sc, use_edges=False, fps=10)
     states = [r["ctrl_state"] for r in rows]
     assert "DESVIO" in states and rows[0]["ctrl_state"] == "WARMUP"

@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.3.1
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.3.2
  *
  * DOIS MODOS (troque por `mode auto|phone` na serial ou DEFAULT_MODE abaixo):
  *   auto  : o ESP32 decide sozinho so com o sensor (mesma logica do controller.py, sem visao):
@@ -30,7 +30,7 @@
 #include <esp_system.h>
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.3.2"
+#define FW_VERSION "car_firmware 0.3.4"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -81,7 +81,7 @@
 // ============================== PARAMETROS ==================================
 struct Params {
   // distancias (cm)
-  float d_stop_cm = 50, d_clear_cm = 100, hard_stop_cm = 20, none_score_cm = 50, max_range_cm = 200;
+  float d_stop_cm = 30, d_clear_cm = 60, hard_stop_cm = 20, none_score_cm = 45, max_range_cm = 200;
   // velocidades normalizadas [0,1]
   float v_cruise = 0.35f, v_slow = 0.15f, v_rev = 0.3f, v_turn = 0.3f;
   // manobra (ms) e servo
@@ -90,7 +90,7 @@ struct Params {
   // guarda de reentrada
   float guard_window_ms = 20000, guard_max = 2, backoff1_ms = 1000, backoff2_ms = 2000, backoff3_ms = 4000;
   // carro (calibrar com a bateria)
-  float trim_left = 0.9f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
+  float trim_left = 1.0f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
   float pwm_min = 130, pwm_max = 150, slew_per_s = 2.0f;   // [DEMO] valores atuais do carro
   float kick_pwm = 200, kick_ms = 0;                         // arrancada desligada
   // reflexo / phone
@@ -169,12 +169,21 @@ struct Kick { int dir; uint32_t until; };
 static Kick kickA = {0, 0}, kickB = {0, 0};
 
 // sobrevive a reset por brownout/panic/watchdog (nao a desligar a energia)
-#define RTC_MAGIC 0xCA770003u
+#define RTC_MAGIC 0xCA770005u
 RTC_NOINIT_ATTR uint32_t rtcMagic;
 RTC_NOINIT_ATTR uint32_t rtcArmed;
 RTC_NOINIT_ATTR uint32_t rtcMode;
 RTC_NOINIT_ATTR uint32_t rtcRestores;
 RTC_NOINIT_ATTR char rtcGoal[24];
+
+// diario de bordo do servo/varredura (aim, olha, decide): sobrevive a reset (nao a falta de energia)
+// e e reenviado a quem conecta, assim a leitura do sensor nas curvas nao se perde se o link cair
+#define EV_N 16
+struct ScanEv { uint32_t ms, n; float a, b; uint16_t boot; uint8_t k, ok; };
+RTC_NOINIT_ATTR ScanEv rtcEv[EV_N];
+RTC_NOINIT_ATTR uint32_t rtcEvSeq;
+RTC_NOINIT_ATTR uint32_t rtcBoot;
+RTC_NOINIT_ATTR uint32_t evLiveSeq;        // ultimo evento emitido com algum cliente WS conectado (persiste no reset)
 static int resetReason = 0;
 static const char* RR[] = {"?", "LIGOU", "externo", "software", "PANIC", "wdt_int", "WDT_TASK", "WDT", "sono",
                            "BROWNOUT", "sdio"};
@@ -235,6 +244,46 @@ static bool jsonBool(const char* s, const char* key, bool* out) {
 }
 
 // ================================ SERVO =====================================
+// k: 0 = aim (a = alvo, graus) | 1 = olha (a = graus, b = cm ou -1 sem eco, ok = 1 leu / 0 estourou o tempo)
+//    2 = decide (a = nota E, b = nota D, ok = lado + 1)
+static void evFormat(char* b, size_t n, const ScanEv& e, bool replay) {
+  const char* kn = e.k == 0 ? "aim" : (e.k == 1 ? "olha" : "decide");
+  int m = snprintf(b, n, "{\"t\":\"scan\",\"k\":\"%s\",\"n\":%lu,\"boot\":%u,\"ms\":%lu",
+                   kn, (unsigned long)e.n, (unsigned)e.boot, (unsigned long)e.ms);
+  if (m < 0 || (size_t)m >= n) return;
+  if (e.k == 0) m += snprintf(b + m, n - m, ",\"deg\":%.1f", e.a);
+  else if (e.k == 1) {
+    m += snprintf(b + m, n - m, ",\"deg\":%.1f,\"got\":%d", e.a, (int)e.ok);
+    if (e.ok && e.b >= 0) m += snprintf(b + m, n - m, ",\"cm\":%.1f", e.b);
+    else m += snprintf(b + m, n - m, ",\"cm\":null");
+  } else m += snprintf(b + m, n - m, ",\"L\":%.1f,\"R\":%.1f,\"side\":%d", e.a, e.b, (int)e.ok - 1);
+  if (replay && (size_t)m < n) m += snprintf(b + m, n - m, ",\"replay\":1");
+  if ((size_t)m < n) snprintf(b + m, n - m, "}");
+}
+
+static void logEv(uint8_t k, float a, float b, uint8_t ok, uint32_t now) {
+  uint32_t n = ++rtcEvSeq;
+  ScanEv& e = rtcEv[n % EV_N];
+  e.ms = now; e.n = n; e.a = a; e.b = b; e.boot = (uint16_t)rtcBoot; e.k = k; e.ok = ok;
+  char buf[200];
+  evFormat(buf, sizeof(buf), e, false);
+  emitf("%s", buf);
+  if (netUp && ws.connectedClients() > 0) evLiveSeq = n;
+}
+
+static void onWsConnect(uint8_t num) {                   // reenvia o que aconteceu sem ninguem ouvindo
+  uint32_t first = rtcEvSeq > EV_N ? rtcEvSeq - EV_N + 1 : 1;
+  if (evLiveSeq + 1 > first) first = evLiveSeq + 1;
+  char buf[200];
+  for (uint32_t n = first; n <= rtcEvSeq; n++) {
+    const ScanEv& e = rtcEv[n % EV_N];
+    if (e.n != n) continue;
+    evFormat(buf, sizeof(buf), e, true);
+    ws.sendTXT(num, buf);
+  }
+  evLiveSeq = rtcEvSeq;
+}
+
 static void servoWrite(float deg) {
   servoUs(PIN_SENSOR_SERVO, CH_SENSOR_SERVO,
           SERVO_CENTER_US + SENSOR_SERVO_SIGN * (deg + P.sensor_trim_deg) * SERVO_US_PER_DEG);
@@ -247,7 +296,7 @@ static void aimTo(float deg, uint32_t now) {
   servoInit = true;
   servoDeg = deg;
   if (first) { servoCur = deg; servoWrite(deg); }
-  else tServoStep = now - SERVO_STEP_MS;                 // 1o passo ja no proximo servoTick
+  else { tServoStep = now - SERVO_STEP_MS; logEv(0, deg, 0, 0, now); }   // 1o passo ja no proximo servoTick
   tAim = now;
   ringN = 0;
   meas.valid = false;
@@ -423,11 +472,12 @@ static void decideSide(uint32_t now) {
   aimTo(0, now);
   if (scoreL < P.d_stop_cm && scoreR < P.d_stop_cm) {    // nenhum lado livre
     tries++;
-    if (tries > (int)P.avoid_retries) { setWhy("sem saida"); clearActive = false; goSub(S_PRESO, now); return; }
+    if (tries > (int)P.avoid_retries) { setWhy("sem saida"); clearActive = false; logEv(2, scoreL, scoreR, 1, now); goSub(S_PRESO, now); return; }
     side = 0; revMs = P.reverse_ms * 1.5f;
   } else {
     side = scoreL >= scoreR ? -1 : +1; revMs = P.reverse_ms;
   }
+  logEv(2, scoreL, scoreR, (uint8_t)(side + 1), now);     // notas E/D e o lado escolhido
   goSub(S_RE, now);
 }
 
@@ -462,6 +512,7 @@ static void autoStep(uint32_t now, float* v, float* s) {
       bool got = meas.valid && absf(meas.angle - servoDeg) < 0.5f;
       if (got || el >= (uint32_t)P.look_timeout_ms) {
         float sc = (got && meas.cm >= 0) ? meas.cm : P.none_score_cm;
+        logEv(1, servoDeg, got ? meas.cm : -1.0f, got ? 1 : 0, now);   // leitura (ou timeout) de cada olhada
         if (sub == S_OLHA_E) { scoreL = sc; aimTo(+P.scan_deg, now); goSub(S_OLHA_D, now); }
         else { scoreR = sc; decideSide(now); }
       }
@@ -677,7 +728,9 @@ void setup() {
   netBegin();
   resetReason = (int)esp_reset_reason();
   bool warm = resetReason != ESP_RST_POWERON && resetReason != ESP_RST_EXT && rtcMagic == RTC_MAGIC;
-  if (!warm) { rtcMagic = RTC_MAGIC; rtcArmed = 0; rtcMode = DEFAULT_MODE; rtcRestores = 0; rtcGoal[0] = 0; }
+  if (!warm) { rtcMagic = RTC_MAGIC; rtcArmed = 0; rtcMode = DEFAULT_MODE; rtcRestores = 0; rtcGoal[0] = 0;
+               rtcEvSeq = 0; evLiveSeq = 0; rtcBoot = 0; memset(rtcEv, 0, sizeof(rtcEv)); }
+  rtcBoot++;
   emitf("{\"t\":\"hello\",\"fw\":\"%s\",\"mode\":\"%s\",\"armed\":false,\"motors\":%d,\"reset\":\"%s\"}",
         FW_VERSION, mode == MODE_AUTO ? "auto" : "phone", MOTORS_ENABLED,
         (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?");

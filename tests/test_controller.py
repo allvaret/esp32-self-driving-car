@@ -34,8 +34,8 @@ def has(log, cstate, sub=None):
     return any(i["ctrl_state"] == cstate and (sub is None or i["sub"] == sub) for _, i in log)
 
 
-def scn_obstacle(t_close=3.0, left=2.0, right=0.3):
-    return Scenario([0, t_close, t_close + 0.1, 100], [3, 3, 0.3, 0.3], [left] * 4, [right] * 4)
+def scn_obstacle(t_close=3.0, left=2.0, right=0.2):
+    return Scenario([0, t_close, t_close + 0.1, 100], [3, 3, 0.2, 0.2], [left] * 4, [right] * 4)
 
 
 # ------------------------------------------------------------- fusao / FSM ---
@@ -51,7 +51,7 @@ def test_sensor_stops_even_if_vision_says_livre():
 
 
 def test_picks_freer_side():
-    for left, right, want in ((2.0, 0.3, -1.0), (0.3, 2.0, +1.0)):
+    for left, right, want in ((2.0, 0.2, -1.0), (0.2, 2.0, +1.0)):
         log = run(scn_obstacle(left=left, right=right), lambda t: Vision(V.LIVRE), T=9)
         steer = [i["steer"] for _, i in log if i["sub"] == "CURVA" and i["v"] > 0]
         assert steer and all(s == want for s in steer), steer
@@ -74,12 +74,12 @@ def test_edge_near_escalates_to_scan_only():
 
 
 def test_thin_leg_fault_is_a_known_miss():
-    log = run(Scenario.constant(center=0.3), lambda t: Vision(V.LIVRE), T=3, faults=[(0, 3, "far")])
+    log = run(Scenario.constant(center=0.2), lambda t: Vision(V.LIVRE), T=3, faults=[(0, 3, "far")])
     assert not has(log, "DESVIO"); print("ok  [limitacao] sensor 'far' + visao LIVRE nao freia (perna fina)")
 
 
 def test_boxed_in_goes_hold_and_releases():
-    scn = Scenario([0, 3, 3.1, 14, 14.1, 100], [3, 3, .3, .3, 3, 3], [.3] * 6, [.3] * 6)
+    scn = Scenario([0, 3, 3.1, 14, 14.1, 100], [3, 3, .2, .2, 3, 3], [.2] * 6, [.2] * 6)
     log = run(scn, lambda t: Vision(V.LIVRE), T=20)
     assert has(log, "DESVIO", "PRESO") and log[-1][1]["ctrl_state"] in ("VARREDURA", "FRENTE")
     print("ok  sem saida -> PRESO -> libera")
@@ -98,7 +98,7 @@ def test_time_based_hysteresis_is_fps_independent():
 
 # ------------------------------------------------ guarda de reentrada/backoff ---
 def test_reentry_guard_backoff_sequence():
-    scn = Scenario.constant(center=0.3, left=2.0, right=0.3)     # obstaculo que nunca sai
+    scn = Scenario.constant(center=0.2, left=2.0, right=0.2)     # obstaculo que nunca sai
     log = run(scn, lambda t: Vision(V.LIVRE), T=60)
     seq = states(log)
     waits = [(t, next((t2 for t2, *_ in seq if t2 > t), log[-1][0] + 0.1)) for t, cs, sub in seq if sub == "ESPERA"]
@@ -111,7 +111,7 @@ def test_reentry_guard_backoff_sequence():
 
 
 def test_reentry_guard_resets_after_quiet_window():
-    scn = Scenario([0, 4, 4.1, 39.9, 40, 100], [.3, .3, 3, 3, .3, .3], [2.0] * 6, [.3] * 6)
+    scn = Scenario([0, 4, 4.1, 39.9, 40, 100], [.2, .2, 3, 3, .2, .2], [2.0] * 6, [.2] * 6)
     log = run(scn, lambda t: Vision(V.LIVRE), T=44)
     late = [(t, i) for t, i in log if t >= 40 and i["ctrl_state"] == "DESVIO"]
     assert late and late[0][1]["sub"] == "PARADA" and late[0][1]["guard_level"] == 0

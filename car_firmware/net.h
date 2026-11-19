@@ -30,6 +30,7 @@ static bool netUp = false;
 static char netGoal[24] = "nenhuma";   // ultima motivacao recebida (reenviada a quem conecta)
 
 static void handleJson(const char* line, uint32_t now);   // definida no .ino
+static void onWsConnect(uint8_t num);                      // definida no .ino (reenvia o diario do servo)
 
 // printf para o protocolo: serial + broadcast WebSocket (sem o '\n' final no WS)
 static void emitf(const char* fmt, ...) {
@@ -57,6 +58,7 @@ static void wsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
     char b[64];
     snprintf(b, sizeof(b), "{\"t\":\"goal\",\"g\":\"%s\"}", netGoal);
     ws.sendTXT(num, b);
+    onWsConnect(num);
   } else if (type == WStype_TEXT) {
     static char buf[384];
     if (len == 0 || len >= sizeof(buf)) return;          // vazio ou longo demais: descarta

@@ -74,7 +74,7 @@ fails += not ok(any('"cfg_ok"' in m for t, m in o) and abs(float(at(tr, 6500)["c
                 f"cfg trim_left=0.8: L={at(tr,6500)['curL']} R={at(tr,6500)['curR']} (esperado 0.40 / 0.50)")
 tr, o = run([(100, "set trim_right 0.9"), (200, "get"), (300, "help"), (400, "set nao_existe 1")], t_end=1000)
 txt = " | ".join(m for t, m in o)
-fails += not ok("trim_right = 0.900" in txt and "parametro desconhecido: nao_existe" in txt and "d_stop_cm = 50.000" in txt, "comandos de texto: set/get/help")
+fails += not ok("trim_right = 0.900" in txt and "parametro desconhecido: nao_existe" in txt and "d_stop_cm = 30.000" in txt, "comandos de texto: set/get/help")
 
 # 7) lixo na serial nao derruba
 junk = [(1000, "{garbage"), (1100, "\x01\x02\x03"), (1200, "{" + "x" * 400), (1300, '{"t":"drive","v":abc}'), (1400, '{"t":"nada"}'), (1500, "")]
