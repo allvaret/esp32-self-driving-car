@@ -1,4 +1,4 @@
-# Protocolo celular <-> ESP32 (firmware 0.5)
+# Protocolo celular <-> ESP32 (firmware 0.5.1)
 
 **Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
 *opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
@@ -13,12 +13,13 @@
 ## Fiacao dos motores (L298N)
 | Pino ESP32 | L298N | Saida | Roda (tracao so nas dianteiras; traseiras livres) | No firmware |
 |---|---|---|---|---|
-| 19 / 16 / 17 | ENA / IN1 / IN2 | OUT1 / OUT2 | dianteira **DIREITA** | `curR`, `R`, `trim_right`, `MOTOR_RIGHT_INVERT` |
-| 32 / 33 / 21 | ENB / IN3 / IN4 | OUT3 / OUT4 | dianteira **ESQUERDA** | `curL`, `L`, `trim_left`, `MOTOR_LEFT_INVERT` |
+| 19 / 16 / 17 | ENA / IN1 / IN2 | OUT1 / OUT2 | dianteira **ESQUERDA** | `curL`, `L`, `trim_left`, `MOTOR_LEFT_INVERT` |
+| 32 / 33 / 21 | ENB / IN3 / IN4 | OUT3 / OUT4 | dianteira **DIREITA** | `curR`, `R`, `trim_right`, `MOTOR_RIGHT_INVERT` |
 
 Curva diferencial: `L = v + s*diff_gain`, `R = v - s*diff_gain`; `s > 0` = direita (roda esquerda mais rapida).
-Ate o firmware 0.4.0 o motor A (ENA) se chamava "esquerdo": `L`, `trim_left` e o `L` do `state` eram na verdade a roda
-DIREITA e `s > 0` virava o carro para a ESQUERDA (logs anteriores a 0.4.1 tem `L`/`R` trocados).
+Fiacao **medida** pelo giroscopio (log de 20/11: ENA para frente e ENB para tras = +153 graus/s, direita; diagnostico de
+21/11 com a 0.5.0: `dir` girou para a esquerda). As versoes 0.4.1 e 0.5.0 tinham ENA = direita: nelas `L`/`R` do
+`state`/`diag` estao **trocados** e as curvas sairam ao contrario. Ate a 0.4.0 e desde a 0.5.1 o mapeamento esta certo.
 
 ## Papeis
 | Quem | Conecta em | Faz |

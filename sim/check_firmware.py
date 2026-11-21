@@ -104,11 +104,11 @@ fails += not ok("trim_right = 0.900" in txt and "parametro desconhecido: nao_exi
                 and "turn_dps = 90.000" in txt and "vis_free_min = 50.000" in txt and "scan_deg = 30.000" in txt and "reverse_ms = 500.000" in txt,
                 "comandos de texto: set/get/help (parametros novos presentes)")
 
-# 6b) fiacao fisica (sim.cpp: ENA/IN1/IN2 = roda DIREITA, ENB/IN3/IN4 = roda ESQUERDA; o yaw sai dos PINOS)
+# 6b) fiacao fisica (sim.cpp: ENA/IN1/IN2 = roda ESQUERDA, ENB/IN3/IN4 = roda DIREITA; o yaw sai dos PINOS)
 tr, o = run(base + drives(5000, 7000, 0.3, 1.0), t_end=7000)
 r = at(tr, 6500)
-fails += not ok(float(r["uL"]) > float(r["uR"]) and float(r["rate"]) > 0 and int(r["enbPWM"]) > int(r["enaPWM"]),
-                f"(fiacao) s=+1 (direita): roda ESQUERDA (ENB) mais rapida e o carro gira para a DIREITA "
+fails += not ok(float(r["uL"]) > float(r["uR"]) and float(r["rate"]) > 0 and int(r["enaPWM"]) > int(r["enbPWM"]),
+                f"(fiacao) s=+1 (direita): roda ESQUERDA (ENA) mais rapida e o carro gira para a DIREITA "
                 f"(uE={r['uL']} uD={r['uR']} giro={r['rate']} ENB={r['enbPWM']} ENA={r['enaPWM']})")
 tr, o = run(base + drives(5000, 7000, 0.3, 0.0), t_end=7000)
 r = at(tr, 6500)
@@ -118,7 +118,7 @@ fails += not ok(float(r["uL"]) > 0.25 and float(r["uR"]) > 0.25 and abs(float(r[
 tr, o = run(base + [(4300, '{"t":"cfg","trim_left":0.5}')] + drives(5000, 7000, 0.4), t_end=7000)
 r = at(tr, 6500)
 fails += not ok(float(r["uL"]) < float(r["uR"]) and abs(float(r["uL"]) - 0.2) < 0.03,
-                f"(fiacao) trim_left atua na roda ESQUERDA fisica (ENB): uE={r['uL']} uD={r['uR']}")
+                f"(fiacao) trim_left atua na roda ESQUERDA fisica (ENA): uE={r['uL']} uD={r['uR']}")
 
 # 7) lixo na serial nao derruba
 junk = [(1000, "{garbage"), (1100, "\x01\x02\x03"), (1200, "{" + "x" * 400), (1300, '{"t":"drive","v":abc}'), (1400, '{"t":"nada"}'), (1500, ""),

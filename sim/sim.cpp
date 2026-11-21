@@ -39,8 +39,8 @@ static float W_uL = 0, W_uR = 0;                           // velocidade de cada
 static float W_lag = 0;                                    // atraso (ms) do {"t":"yaw"} ate chegar ao ESP32 (--yaw-lag)
 static float W_tau = 0;                                    // inercia (ms): o giro segue as rodas com 1a ordem (--tau)
 
-// ---- fiacao FISICA do carro (informada pelo dono; NAO vem do firmware) ----
-// OUT1/OUT2 (ENA, IN1/IN2) = roda dianteira DIREITA; OUT3/OUT4 (ENB, IN3/IN4) = roda dianteira ESQUERDA.
+// ---- fiacao FISICA do carro (medida pelo giroscopio nos logs de 20/11 e 21/11; NAO vem do firmware) ----
+// ENA/IN1/IN2 (OUT1/OUT2) = roda dianteira ESQUERDA; ENB/IN3/IN4 (OUT3/OUT4) = roda dianteira DIREITA.
 // "Para frente" em cada roda = IN_a LOW / IN_b HIGH (o sentido ja foi acertado no carro com o firmware atual).
 // Velocidade da roda a partir do PWM: u = ef * max(0, duty - zm) / (pwm_max - pwm_min).
 // Padrao ef = 1 e zona morta zm = pwm_min: u = |comando| (carro ideal). --wheel-left/right ef zm muda isso.
@@ -148,8 +148,8 @@ int main(int argc, char** argv) {
     g_us += 2000;
     loop();
     double dt = (double)(g_us - last_us) / 1e6; last_us = g_us;
-    W_uL = wheelU(PIN_ENB, PIN_IN3, PIN_IN4, W_effL, W_dzL);   // roda ESQUERDA (OUT3/OUT4)
-    W_uR = wheelU(PIN_ENA, PIN_IN1, PIN_IN2, W_effR, W_dzR);   // roda DIREITA (OUT1/OUT2)
+    W_uL = wheelU(PIN_ENA, PIN_IN1, PIN_IN2, W_effL, W_dzL);   // roda ESQUERDA (ENA, OUT1/OUT2)
+    W_uR = wheelU(PIN_ENB, PIN_IN3, PIN_IN4, W_effR, W_dzR);   // roda DIREITA (ENB, OUT3/OUT4)
     double cmdRate = W_dps * (double)(W_uL - W_uR) / 1.2;  // + = direita (roda esquerda mais rapida)
     W_rate = W_tau > 0 ? W_rate + (cmdRate - W_rate) * (dt * 1000.0) / (W_tau + dt * 1000.0) : cmdRate;
     W_psi += W_rate * dt;

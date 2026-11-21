@@ -111,7 +111,8 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `av
 | `forwardAllowed` usava o ping bruto | usa a classe pela mediana + histórico |
 | ESPERA infinita com obstáculo parado | fim da ESPERA ⇒ manobra completa; guarda com `gone` |
 | `MockDriveLink.log` crescia sem limite no S9 | o `Runner` com mocks saiu do caminho ao vivo |
-| Log 20/11 (1): com L = R o carro gira 100–200°/s | fiação: `L`/`R` estavam trocados (ENA = roda **direita**) e `s > 0` virava à esquerda (0.4.1); correção de rumo no ESP32 com trim aprendido (0.5) |
+| Log 20/11 (1): com L = R o carro gira 100–200°/s | correção de rumo no ESP32 com trim aprendido (0.5). A troca de fiação da 0.4.1 (ENA = direita) estava **errada** e foi desfeita na 0.5.1 (ver abaixo) |
+| Diagnóstico 21/11 (0.5.0): `dir` gira à esquerda (−300°/s), reto puxa à direita (+175°/s) e a correção não muda nada | o giroscópio estava certo e a fiação do firmware trocada: ENA = roda **esquerda** (0.5.1). A correção subia a roda que já era a rápida |
 | Log 20/11 (2): correção de rumo não atuava | saiu do brain; roda no ESP32 nos dois modos, desde a arrancada, autoridade ±2,0 (até `hold_pwm_max`), trim persistente |
 | Log 20/11 (3): ciclo avoid → ESPERA de 35 s com 86 cm válidos | sensor refuta a visão (brain e ESP32); fim da ESPERA com a condição persistente ⇒ manobra completa |
 | Log 20/11 (4): curva passava do alvo (70° para 30°) | curva era espelhada (fiação) e sem desaceleração; agora desacelera perto do alvo e reporta `turn` |

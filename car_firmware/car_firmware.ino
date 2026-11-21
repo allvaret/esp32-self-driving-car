@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.5.0
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.5.1
  *
  * CAMINHO 1: o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
  * a OPINIAO da visao ({"t":"vis"}) e o rumo do giroscopio ({"t":"yaw"}). Quem para, varre e desvia e este arquivo.
@@ -39,7 +39,7 @@
 #include <Preferences.h>        // NVS: guarda o trim aprendido do rumo entre desligamentos
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.5.0"
+#define FW_VERSION "car_firmware 0.5.1"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -50,10 +50,11 @@
 #define MODE_PHONE 1
 #define DEFAULT_MODE MODE_AUTO
 #define MOTOR_BRAKE 0           // 1 = freio ativo ao parar (IN1=IN2=HIGH); 0 = roda livre (sem pico de frenagem)
-// Fiacao real: OUT1/OUT2 (ENA, IN1/IN2) = roda dianteira DIREITA; OUT3/OUT4 (ENB, IN3/IN4) = roda dianteira ESQUERDA.
+// Fiacao real (MEDIDA pelo giroscopio nos logs de 20/11 e 21/11): ENA/IN1/IN2 (OUT1/OUT2) = roda dianteira ESQUERDA;
+// ENB/IN3/IN4 (OUT3/OUT4) = roda dianteira DIREITA. A 0.5.0 tinha isso trocado (curvas ao contrario).
 // So as dianteiras tem tracao (traseiras livres). L/curL/trim_left = roda ESQUERDA; R/curR/trim_right = roda DIREITA.
-#define MOTOR_LEFT_INVERT 1     // roda ESQUERDA (ENB/IN3/IN4) gira ao contrario? ponha 1 (1 = sentido ja acertado no carro)
-#define MOTOR_RIGHT_INVERT 1    // roda DIREITA (ENA/IN1/IN2)
+#define MOTOR_LEFT_INVERT 1     // roda ESQUERDA (ENA/IN1/IN2) gira ao contrario? ponha 1 (1 = sentido ja acertado no carro)
+#define MOTOR_RIGHT_INVERT 1    // roda DIREITA (ENB/IN3/IN4)
 #define SENSOR_SERVO_SIGN -1     // +graus = direita. Se o servo girar ao contrario, ponha -1
 #define STEER_SERVO_SIGN 1
 #define HEARTBEAT_MS 500        // linha {"t":"state"...} periodica (0 = desliga)
@@ -64,12 +65,12 @@
 #define PIN_ECHO 22             // ATENCAO: ECHO do HC-SR04 e 5 V -> divisor 1k/2k ate este pino
 #define PIN_SENSOR_SERVO 18
 #define PIN_STEER_SERVO 4       // so no STEER_SERVO (nao usado no diferencial)
-#define PIN_ENA 19              // L298N: ENA (PWM) -> OUT1/OUT2 -> roda DIREITA. 25/26/27 com defeito nesta placa
-#define PIN_IN1 16              // RX2  (roda DIREITA)
-#define PIN_IN2 17              // TX2  (roda DIREITA)
-#define PIN_ENB 32              // L298N: ENB (PWM) -> OUT3/OUT4 -> roda ESQUERDA - retire o jumper do ENB
-#define PIN_IN3 33              //      (roda ESQUERDA)
-#define PIN_IN4 21              //      (roda ESQUERDA)
+#define PIN_ENA 19              // L298N: ENA (PWM) -> OUT1/OUT2 -> roda ESQUERDA. 25/26/27 com defeito nesta placa
+#define PIN_IN1 16              // RX2  (roda ESQUERDA)
+#define PIN_IN2 17              // TX2  (roda ESQUERDA)
+#define PIN_ENB 32              // L298N: ENB (PWM) -> OUT3/OUT4 -> roda DIREITA - retire o jumper do ENB
+#define PIN_IN3 33              //      (roda DIREITA)
+#define PIN_IN4 21              //      (roda DIREITA)
 #define PIN_BTN 0               // botao BOOT da placa (arma/desarma)
 #define PIN_LED 2               // LED da placa
 
@@ -250,7 +251,7 @@ static char lineBuf[160];
 static int lineLen = 0;
 static uint32_t tHeartbeat = 0;
 struct Kick { int dir; uint32_t until; };
-static Kick kickL = {0, 0}, kickR = {0, 0};   // roda esquerda (ENB) / direita (ENA)
+static Kick kickL = {0, 0}, kickR = {0, 0};   // roda esquerda (ENA) / direita (ENB)
 
 // sobrevive a reset por brownout/panic/watchdog (nao a desligar a energia)
 #define RTC_MAGIC 0xCA770006u
@@ -647,14 +648,14 @@ static void driveApply(uint32_t now, float v, float s) {
   }
 #endif
   // escalonamento: parte primeiro a roda com MAIS comando (a lenta, quando a correcao atua); a outra espera
-  // KICK_STAGGER_MS. Sem correcao (L = R) a ESQUERDA (ENB) parte primeiro, como antes.
+  // KICK_STAGGER_MS. Sem correcao (L = R) a ESQUERDA (ENA) parte primeiro.
   if (absf(curL) >= absf(curR)) {
-    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now, 0);
-    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now,
+    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now, 0);
+    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now,
                kickL.dir != 0 ? KICK_STAGGER_MS : 0);
   } else {
-    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now, 0);
-    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now,
+    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now, 0);
+    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now,
                kickR.dir != 0 ? KICK_STAGGER_MS : 0);
   }
 }

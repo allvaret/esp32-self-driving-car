@@ -12,8 +12,9 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 
 > O log baixado do visor (`carrinho_*.jsonl`) tem só as mensagens do ESP32, sem `k`/`w`; a hora fica em `ts`.
 
-> **Logs gravados antes do firmware 0.4.1** (até 20/11) têm `L` e `R` **trocados**: o firmware chamava a roda
-> direita (ENA, OUT1/OUT2) de "esquerda", e `s > 0` virava o carro para a esquerda. Ver `docs/protocolo_ws.md` (fiação).
+> **Logs gravados com o firmware 0.4.1 e 0.5.0** (21/11) têm `L` e `R` **trocados** e as curvas ao contrário
+> (`dir` virava à esquerda): esses firmwares mandavam o `L` para o ENB, que é a roda **direita**. Até a 0.4.0 (20/11)
+> e desde a 0.5.1, `L` = roda esquerda = ENA (OUT1/OUT2). Ver `docs/protocolo_ws.md` (fiação).
 
 ---
 
