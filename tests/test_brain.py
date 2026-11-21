@@ -54,7 +54,7 @@ def _setup(goal="nenhuma", src=None, armed=False):
     brain._link = lk = FakeLink()
     lk.goal, lk.src, lk.state = goal, src, {"armed": armed, "st": "FRENTE", "L": 0.0, "R": 0.0}
     brain._clock = clk = Clock()
-    brain._last_key, brain._last_conn_seq, brain._armed_prev = None, 0, False
+    brain._last_key, brain._last_conn_seq, brain._armed_prev, brain._moving_prev = None, 0, False, False
     brain._last_vis_t = brain._last_think_t = brain._last_viz_t = brain._last_avoid_t = brain._last_yaw_t = -99.0
     brain._last_state, brain._oversize, brain._logger = None, 0, None
     brain._reset_motion()
@@ -243,6 +243,43 @@ def test_yaw_rate_and_message():
     assert 6 <= len(ys) <= 10, len(ys)             # ~20 Hz
     assert ys[-1]["psi"] > 0 and set(ys[-1]) == {"t", "psi", "r"}
     print(f"ok  yaw ~20 Hz ({len(ys)} msgs em 0,4 s), + = direita")
+
+
+def _spin(clk, rate, secs, fps=20):
+    """Giroscopio a 50 Hz intercalado com quadros da visao (brain.step) a `fps`."""
+    n, every = int(secs / 0.02), max(1, int(round(50 / fps)))
+    for i in range(n):
+        brain.on_gyro(rate)
+        if i % every == 0:
+            brain.step(_info())
+        clk.adv(0.02)
+
+
+def test_diag_armed_without_goal_integrates_psi():
+    # log de 21/11: armado pelo diagnostico (goal "nenhuma") o brain zerava o psi A CADA QUADRO -> psi ~0 a 300 graus/s
+    lk, clk = _setup("nenhuma", None, armed=True)
+    lk.state.update(L=0.6, R=-0.6)                 # rodas girando (sem estimar vies)
+    _spin(clk, 300.0, 1.0)
+    ys = lk.of("yaw")
+    psi = ys[-1]["psi"] - ys[0]["psi"]
+    assert 250 < psi < 320, psi
+    print(f"ok  diagnostico (armado, goal nenhuma): psi integra entre quadros ({psi:.0f} graus em 1 s a 300 graus/s)")
+
+
+def test_psi_resets_once_when_goal_ends():
+    lk, clk = _setup("explorar", "sensor", armed=True)
+    lk.state.update(L=0.35, R=0.35)
+    _spin(clk, 50.0, 0.5)
+    assert brain._yaw.psi > 15
+    lk.goal, lk.src = "nenhuma", None              # motivacao acabou, ainda armado
+    _spin(clk, 0.0, 0.05)
+    assert abs(brain._yaw.psi) < 1.0, brain._yaw.psi
+    _spin(clk, 100.0, 0.5)
+    assert brain._yaw.psi > 30, brain._yaw.psi     # depois da transicao volta a integrar
+    lk.state["armed"] = False
+    _spin(clk, 100.0, 0.2)
+    assert brain._yaw.psi == 0.0
+    print("ok  psi zera uma vez quando a motivacao acaba e sempre que desarmado")
 
 
 def test_every_message_fits_160_bytes():

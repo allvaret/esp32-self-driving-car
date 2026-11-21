@@ -20,7 +20,8 @@ Motivacao: o visor manda {"t":"goal","g":"explorar","src":"sensor"|"visao"} (o E
   src ausente -> sensor (o mais seguro). O brain reage a mudanca de goal OU de src.
   O brain NUNCA arma o carro (quem arma e o ESP32 ao receber o goal, ou o botao BOOT);
   na reconexao do WS ele so reenvia o mode do src atual.
-  goal "parar"/"nenhuma"/None, ou ESP32 desarmado: zera goal/src lembrados e o integrador de yaw.
+  goal "parar"/"nenhuma"/None, ou ESP32 desarmado: zera goal/src lembrados. O integrador de yaw zera
+  enquanto desarmado e uma vez quando a motivacao acaba; armado sem goal (diagnostico) ele integra.
 Parametros abaixo [DEMO]; filtro/vies do giroscopio em config.HeadingConfig; correcao de rumo em
 config.ControlConfig.hold_* (espelho dos Params do firmware).
 """
@@ -62,6 +63,7 @@ _last_key = None                 # (goal, src) ja tratado
 _last_conn_seq = 0
 _last_state = None
 _armed_prev = False
+_moving_prev = False             # goal de movimento no quadro anterior (zera o rumo so na transicao)
 _last_think_t = _last_viz_t = _last_vis_t = _last_yaw_t = _last_avoid_t = 0.0
 _calib_seen = 0
 _last_vis = {"ok": False, "s": None, "state": None, "conf": None}
@@ -250,7 +252,7 @@ def _resolve(link):
 
 def step(estado, conf=None, msg=None):
     """Chamar a cada frame (depois da visao). Retorna (v, s) enviado em src=visao, senao (0, 0)."""
-    global _armed_prev, _last_key, _last_conn_seq, _last_state, _last_think_t, _last_viz_t, _last_vis_t, _last_avoid_t
+    global _armed_prev, _moving_prev, _last_key, _last_conn_seq, _last_state, _last_think_t, _last_viz_t, _last_vis_t, _last_avoid_t
     with _lock:
         link = _link
         if link is None or not link.connected:
@@ -265,12 +267,16 @@ def step(estado, conf=None, msg=None):
         armed = bool(esp.get("armed"))
         _last_vis.update(ok=p["ok"], s=sectors, state=st, conf=conf)
 
-        # parar / sem motivacao / desarmado: esquece goal/src e zera rumo (nao rearma nada)
-        if goal not in GOALS_MOVE or not armed:
-            if goal not in GOALS_MOVE or _armed_prev:
+        # parar / sem motivacao / desarmado: esquece goal/src (nao rearma nada). O rumo zera so na TRANSICAO
+        # (desarmou ou a motivacao acabou), nunca a cada quadro: armado sem goal (diagnostico do visor) o psi
+        # tem que integrar, senao o ESP32 mede psi ~0 e o termo I/trim da reta aprendem lixo (log de 21/11).
+        moving = goal in GOALS_MOVE
+        if not moving or not armed:
+            if not moving or _armed_prev:
                 _last_key = None
-            _reset_motion()
-        _armed_prev = armed
+            if not armed or _moving_prev:
+                _reset_motion()
+        _armed_prev, _moving_prev = armed, moving
 
         # motivacao ou fonte nova -> so manda o MODE (quem arma e o ESP32)
         key = (goal, src)
