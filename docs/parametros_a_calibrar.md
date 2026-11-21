@@ -178,10 +178,15 @@ girava a +175°/s: a faixa única de 20 pontos fica em cima da zona morta de uma
 | `pwm_min_l` / `pwm_max_l` | -1 | MEDIR | Roda **esquerda** (ENA). Botões **Roda esq.** e **Roda dir.** do visor e depois **Aplicar faixa das rodas**. |
 | `pwm_min_r` / `pwm_max_r` | -1 | MEDIR | Roda **direita** (ENB). Idem. O `cfg` com qualquer um dos quatro grava os quatro na NVS (log `rodas (NVS): ...`); **Rodas: padrão** volta a -1. |
 
-Como o visor calcula: em cada teste por roda, reta `giro = k·(duty − d0)` nos degraus em que a roda andou (|giro| ≥ 15°/s).
-A roda que parte mais tarde fica com `pwm_min = d0 + 5` e `pwm_max = pwm_min + 25`; a outra recebe o duty que dá a
-**mesma velocidade** nesses dois pontos. Assim o mesmo comando anda igual nas duas rodas e a correção de rumo só cobre
-o resto (carga, bateria). Se `hc` ainda ficar colado em ±2, a faixa está errada ou falta `hold_pwm_max`.
+Como o visor calcula: em cada teste por roda, reta `giro = k·(duty − d0)` nos degraus em que a roda andou (|giro| ≥ 15°/s)
+e assentou (`dr` pequeno), **sem o teto**: degraus do alto em que o giro sobe menos da metade da inclinação da reta (roda
+no máximo ou patinando) saem do ajuste. Em 21/11 o teto da esquerda (~395°/s de 170 a 230) achatou a reta para
+2,8°/s por ponto e a faixa sugerida (64..89 / 106..131) não serviu. A roda que parte mais tarde fica com
+`pwm_min = d0 + 5` e `pwm_max = pwm_min + 25`; a outra recebe o duty que dá a **mesma velocidade** nesses dois pontos.
+Nenhuma roda fica abaixo do seu `minimo` (o menor duty que a manteve girando no teste): se precisar, a faixa toda sobe.
+Sem faixa sugerida quando uma roda não anda ou gira igual em qualquer duty (o PWM não a controla). Assim o mesmo comando
+anda igual nas duas rodas e a correção de rumo só cobre o resto (carga, bateria). Se `hc` ainda ficar colado em ±2, a
+faixa está errada ou falta `hold_pwm_max`.
 
 O PWM dos motores é de **10 bits** desde a 0.5.1 (os parâmetros continuam em 0..255, com fração). No carro de 21/11
 1 ponto de duty vale ~19°/s de giro; em 8 bits a correção pulava de ponto em ponto e a reta ficava balançando ±10°/s.

@@ -116,6 +116,8 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `av
 | Diagnóstico 21/11: `psi` ≈ 0 com 300°/s | o brain zerava o integrador a cada quadro sem goal; agora só nas transições |
 | Diagnóstico 21/11: em v = 0,35 (duty 137) a roda direita quase não anda | faixa de duty **por roda** medida pelo teste por roda (visor sugere e aplica, NVS) |
 | Modelo do carro de 21/11: ganhos 0,01/0,05 oscilam | `hold_kp`/`hold_ki` = 0,0015/0,015 e PWM dos motores em 10 bits |
+| Campo 21/11 (0.5.1): faixa sugerida 64..89 / 106..131 e o reto **piorou** (+230..260°/s); com correção, 197°/s | o ajuste usava os degraus do teto da esquerda (~395°/s) e os degraus subindo de 300 ms mediam a aceleração. 0.5.2: degraus descendo de 600 ms com `dr` e `minimo`, ajuste sem o teto, aviso de roda que não obedece o PWM. A esquerda anda bem mais que a direita com o mesmo duty: motor/caixa ou PWM, a separar no próximo teste |
+| Campo 21/11 (0.5.1): a correção sobe a roda certa, sem oscilar, e o trim aprende para o lado certo (−0,8) | ok; falta autoridade enquanto as rodas estiverem tão diferentes |
 | Log 20/11 (2): correção de rumo não atuava | saiu do brain; roda no ESP32 nos dois modos, desde a arrancada, autoridade ±2,0 (até `hold_pwm_max`), trim persistente |
 | Log 20/11 (3): ciclo avoid → ESPERA de 35 s com 86 cm válidos | sensor refuta a visão (brain e ESP32); fim da ESPERA com a condição persistente ⇒ manobra completa |
 | Log 20/11 (4): curva passava do alvo (70° para 30°) | curva era espelhada (fiação) e sem desaceleração; agora desacelera perto do alvo e reporta `turn` |
@@ -124,16 +126,18 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `av
 
 ## 7. Checklist de teste de campo (na ordem)
 
-Antes de tudo: gravar o firmware **0.5.1** e **reinstalar o app** (o brain mudou: o `psi` não zera mais no diagnóstico),
-app aberto e conectado (o yaw vem dele). No visor, **Gravar log** ligado o tempo todo.
+Antes de tudo: gravar o firmware **0.5.2** (o app não mudou desde a 0.5.1), app aberto e conectado (o yaw vem dele).
+No visor, **Gravar log** ligado o tempo todo.
 
 **0. Diagnóstico pelo visor (carro no chão, ~1,5 m livre em volta).** Seção **Diagnóstico** do `http://192.168.4.1`:
    1. **Armar parado (4 s)**: o estado vira `DIAG / parado` e o carro **não** anda. Chip `giro ok` aceso.
-   2. **Zerar trim** (o trim gravado ontem foi aprendido com a fiação trocada e o `psi` quebrado).
-   3. **Roda esq. (degraus)**: só uma roda gira, com força crescente (~2,7 s), e o carro gira sobre a roda parada.
-      Responda no visor **qual roda girou**. Esperado: a ESQUERDA, e o giroscópio dizendo "DIREITA". Anote a `partida`.
-   4. **Roda dir. (degraus)**: o espelho (roda DIREITA, carro gira para a ESQUERDA). Se uma roda **não parte** nem no
-      duty 230, é mecânico (caixa/roda): pare aqui.
+   2. **Rodas: padrão** e **Zerar trim** (a faixa 64..89 / 106..131 e o trim −0,775 de 21/11 vieram de medidas erradas).
+   3. **Roda esq. (degraus)**: só a esquerda gira, começando forte e **diminuindo** (~5,4 s); o carro gira sobre a roda
+      parada. Responda **qual roda girou**. Olhe e escute: a roda tem que **desacelerar** a cada degrau e parar perto do
+      fim. Anote o `minimo`. Se o visor disser que a roda **gira igual em qualquer duty**, o PWM não chega a ela (fio do
+      EN/placa): pare aqui. Se a roda **parar** num duty bem mais alto que a outra, é atrito/motor (caixa de redução).
+   4. **Roda dir. (degraus)**: o espelho (roda DIREITA, carro gira para a ESQUERDA). Se uma roda **não gira** nem no
+      duty 220, é mecânico (caixa/roda): pare aqui. Linhas "(não assentou)" na tabela: repita o teste.
    5. Depois dos dois, o visor mostra a **faixa sugerida** de cada roda: **Aplicar faixa das rodas** (grava na NVS; o log
       mostra `rodas (NVS): esq A..B dir C..D`).
    6. **Girar à direita 1 s** e **Girar à esquerda 1 s**: responda para onde virou; veredito esperado "OK" (`rate_med`

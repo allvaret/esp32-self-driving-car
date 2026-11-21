@@ -103,13 +103,18 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 | `abortado` | motivo, se parou antes (hard stop, desarmado, parar) |
 | `erro` | o teste foi recusado (ex.: "arme antes") |
 
-`roda_esq` / `roda_dir` (uma roda só, para frente, duty bruto em degraus; o carro gira sobre a roda parada):
+`roda_esq` / `roda_dir` (uma roda só, para frente, duty bruto em degraus **descendo**; o carro gira sobre a roda parada):
 
 | Campo | Significado |
 |---|---|
-| `duty` | os degraus de PWM (0–255) aplicados à roda, ~300 ms cada |
-| `rate` | giro mediano em cada degrau (°/s). Mede a velocidade da roda: `roda_esq` deve dar > 0 (direita), `roda_dir` < 0 |
-| `partida` | primeiro duty em que a roda empurrou o carro (\|giro\| ≥ 15°/s); `null` = não partiu. Bom valor para `pwm_min_l/r` |
+| `duty` | os degraus de PWM (0–255) aplicados à roda, de 220 a 45, 600 ms cada (o 1º com 1,2 s) |
+| `rate` | giro mediano na 2ª metade de cada degrau (°/s). Mede a velocidade da roda: `roda_esq` deve dar > 0 (direita), `roda_dir` < 0 |
+| `dr` | quanto o giro ainda mudava na janela de medida. Grande (> 15% do `rate`) = o degrau não assentou |
+| `minimo` | último degrau ainda com \|giro\| ≥ 15°/s = menor duty que mantém a roda girando; `null` = não girou |
+
+Até a 0.5.1 os degraus **subiam** (110..230, 300 ms) e o campo era `partida`. Esses degraus mediam a aceleração do carro:
+em 21/11 a esquerda deu 59 → 143 → 228 → 352 e travou em ~395°/s a partir de 170, formato de aceleração até a velocidade
+de topo. O visor também avisa quando o `rate` quase não cai do duty mais alto ao mais baixo: o PWM não controla a roda.
 
 Com o `psi`/`rate_med`: até 21/11 o `psi` do diagnóstico vinha quase 0 (o brain zerava o integrador a cada quadro sem goal);
 use o `rate_med` nesses logs.

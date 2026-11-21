@@ -1,4 +1,4 @@
-# Protocolo celular <-> ESP32 (firmware 0.5.1)
+# Protocolo celular <-> ESP32 (firmware 0.5.2)
 
 **Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
 *opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
@@ -64,12 +64,17 @@ Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garant
 - O visor pergunta para onde o carro virou de verdade e cruza com o sinal do `rate_med` (o `psi` so se nao houver giro):
   curva errada e giroscopio certo = fiacao/firmware; curva certa e giro com sinal trocado = `YawSensor.kt`; os dois
   trocados = corrigir os dois.
-- `roda_esq` / `roda_dir`: **uma roda so**, para frente, com **duty bruto** em degraus (`d0` 110 ate `d1` 230, passo `dd` 15,
-  `step_ms` 300 cada; opcionais na mensagem), a outra parada; sem rampa, trim nem correcao (valem o hard stop e o servo
-  parado). O carro gira sobre a roda parada, entao o giro de cada degrau mede a velocidade daquela roda:
-  `{"t":"diag","teste":"roda_esq","duty":[110,125,..],"rate":[0.0,8.3,..],"partida":140,"psi":..,"ms":2700}`.
-  `rate` = mediana do giro nos ultimos 60% de cada degrau (`null` sem yaw); `partida` = 1o duty com |giro| >= 15 graus/s.
-  Esperado: `roda_esq` gira para a direita (`rate` > 0), `roda_dir` para a esquerda. O visor pergunta qual roda girou.
+- `roda_esq` / `roda_dir`: **uma roda so**, para frente, com **duty bruto** em degraus **descendo** (de `d1` 220 ate `d0` 45,
+  passo `dd` 25, `step_ms` 600 cada e o 1o com o dobro para a roda embalar; opcionais na mensagem), a outra parada; sem
+  rampa, trim nem correcao (valem o hard stop e o servo parado). O carro gira sobre a roda parada, entao o giro de cada
+  degrau mede a velocidade daquela roda:
+  `{"t":"diag","teste":"roda_esq","duty":[220,195,..,45],"rate":[310.2,..],"dr":[-4,..],"minimo":95,"psi":..,"ms":5400}`.
+  `rate` = mediana do giro na 2a metade de cada degrau (`null` sem yaw); `dr` = quanto o giro ainda mudava nessa janela
+  (grande = nao assentou); `minimo` = ultimo degrau, descendo, ainda com |giro| >= 15 graus/s (menor duty que mantem a
+  roda girando; `null` = nao girou). Ate a 0.5.1 os degraus subiam (110..230, 300 ms) e o campo era `partida`: degraus
+  curtos a partir do zero mediam a aceleracao do carro, nao a velocidade da roda.
+  Esperado: `roda_esq` gira para a direita (`rate` > 0), `roda_dir` para a esquerda. O visor pergunta qual roda girou e
+  avisa se a roda gira igual em qualquer duty (o PWM nao a controla).
 
 ### Reset completo
 `goal parar`, `arm false` e o BOOT desarmando levam tudo ao estado inicial: `armed`/`delegated` falsos, modo padrao
