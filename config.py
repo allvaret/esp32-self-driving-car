@@ -37,6 +37,8 @@ class ControlConfig:
     turn_s: float = 1.0           # SO o controller v1 congelado (tempo fixo). O firmware gira ate o angulo: yaw ou turn_dps
     turn_dps: float = 90.0        # graus/s com v_turn e steer=1 (CALIBRAR; = calib.yaw_rate_dps). So vale sem yaw do celular
     avoid_retries: int = 2        # re maior + nova olhada antes de desistir (PRESO)
+    turn_slow_deg: float = 25.0   # curva com yaw: faltando menos que isso, o giro cai proporcional ao erro...
+    turn_k_min: float = 0.35      # ... ate no minimo esta fracao (v_turn e s), para nao parar antes do alvo
     # --- histerese (s) ---
     clear_s: float = 0.2          # tempo "limpo" p/ voltar a FRENTE / sair de PRESO (antes: 3 ticks @10 fps)
     # --- guarda de reentrada (pessoa/obstaculo que volta) ---
@@ -130,6 +132,8 @@ class Config:
                   "vis_fresh_s", "yaw_fresh_s", "suspect_s", "yaw_lead_s", "sensor_fresh_s"):
             if getattr(c, n) < 0:
                 raise ValueError(f"control.{n} nao pode ser negativo")
+        if c.turn_slow_deg <= 0 or not 0 < c.turn_k_min <= 1:
+            raise ValueError("control: turn_slow_deg > 0 e turn_k_min em (0, 1]")
         for n in ("hold_kp", "hold_ki", "hold_s_max", "hold_s_eps", "hold_delay_s", "hold_psi_max_deg",
                   "trim_rate", "trim_max"):
             if getattr(c, n) < 0:

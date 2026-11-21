@@ -204,9 +204,10 @@ fails += not ok(8 <= abs(dpsi) <= 16, f"(e) com yaw e yaw_lead_ms=100: antecipa 
 dur2, dpsi2 = curva(["--world-dps", 60])
 fails += not ok(abs(dur2 - 167) <= 45 and abs(dpsi2) < 12, f"(e) sem yaw: tempo = alvo/turn_dps = 167 ms: {dur2} ms ({dpsi2:+.1f} graus)")
 dur3, dpsi3 = curva(["--yaw", "--world-dps", 0])
-fails += not ok(500 <= dur3 <= 700, f"(e) com yaw mas o carro nao gira: timeout da curva ({dur3} ms)")
+tout = 1.5 * 15 / 90 * 1000 + 300 + 25 / (90 * 0.35) * 1000       # + tempo da desaceleracao perto do alvo
+fails += not ok(abs(dur3 - tout) <= 60, f"(e) com yaw mas o carro nao gira: timeout da curva ({dur3} ms, esperado {tout:.0f})")
 dur4, dpsi4 = curva(["--yaw", "--world-dps", 90, "--set", "turn_dps", 30])
-fails += not ok(abs(dpsi4) <= 20 and dur4 < 400, f"(e) com yaw, turn_dps errado nao importa: {dpsi4:+.1f} graus")
+fails += not ok(10 <= abs(dpsi4) <= 20 and dur4 < 1000, f"(e) com yaw, turn_dps errado nao importa: {dpsi4:+.1f} graus em {dur4} ms")
 
 # ===== (f) reset completo =====
 def goal_line(g, src=None):
@@ -378,6 +379,28 @@ fails += not ok(seq.count("ESPERA") <= 1 and all(a == "PARADA" for a in after) a
 tr, o = run(base + brain_obst(5000, 20000), ["--ang", 0, 86, "--obst", 9000, 50], t_end=20000)
 fails += not ok(evs("PARADA") and min(e["t"] for e in evs("PARADA")) >= 9000,
                 "(n) a distancia cai para a zona intermediaria (50 cm): o avoid volta a valer (fluxo normal)")
+
+# ===== (o) curva ate o angulo sem passar do alvo (giro rapido, inercia e yaw atrasado) =====
+def turns(o): return [json.loads(m) for t, m in o if m.startswith('{"t":"turn"')]
+FAST = ["--yaw", "--world-dps", 150, "--tau", 80, "--yaw-lag", 60]
+TGT = {-30: ["--left", 40, "--ang", -30, 300, "--right", 40], 30: ["--right", 40, "--ang", 30, 300, "--left", 40],
+       -15: ["--left", 300, "--right", 40]}
+res, old = {}, {}
+for tg, w in TGT.items():
+    tr, o = run(AUTO, ["--obst", 6000, 25, *w, *FAST], t_end=11000)
+    res[tg] = (turns(o) or [{}])[0]
+    tr, o = run(AUTO, ["--obst", 6000, 25, *w, *FAST, "--set", "turn_k_min", 1], t_end=11000)
+    old[tg] = (turns(o) or [{}])[0]
+fails += not ok(all(res[tg].get("alvo") == tg and res[tg].get("erro") is not None and abs(res[tg]["erro"]) < 5 for tg in TGT),
+                "(o) curva com erro final < 5 graus (giro 150 graus/s, inercia 80 ms, yaw 60 ms atrasado): "
+                + ", ".join(f"alvo {tg}: girou {res[tg].get('girou')} erro {res[tg].get('erro')}" for tg in TGT))
+fails += not ok(any(abs(old[tg].get("erro") or 0) > 5 for tg in TGT),
+                "(o) controle: sem desacelerar (turn_k_min = 1) passa do alvo: "
+                + ", ".join(f"{tg}: erro {old[tg].get('erro')}" for tg in TGT))
+fails += not ok(all(set(res[tg]) >= {"t", "alvo", "girou", "erro", "ms", "yaw"} and res[tg]["yaw"] == 1 for tg in TGT), "(o) {\"t\":\"turn\"} com alvo, girou, erro, ms, yaw")
+tr, o = run(AUTO, ["--obst", 6000, 25, *TGT[-30], "--world-dps", 150], t_end=11000)
+tt = turns(o)
+fails += not ok(tt and tt[0]["girou"] is None and tt[0]["yaw"] == 0, f"(o) sem yaw: curva pelo tempo, girou = null: {tt[:1]}")
 
 # ===== Python <-> firmware =====
 from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink

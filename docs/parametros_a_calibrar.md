@@ -49,7 +49,9 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | **`vis_free_min`** | 50 (setor 0, escala 0..100) | **MEDIR** | Valor do setor central (`sectors[2]`, percentil 20 da altura de chão livre) a partir do qual a visão diz "livre". Gravar o log (`sec`) andando em chão livre, em frente a uma parede e a um objeto baixo; escolher o limiar entre as duas populações. Abaixo dele: sem eco = **suspeito**, e a nota de um lado sem eco cai para `d_stop/2`. |
 | **`suspect_ms`** | 1500 ms | **MEDIR** | Quanto tempo depois de uma leitura válida < `d_clear` um "sem eco" ainda é tratado como suspeito. Medir com uma parede em diagonal e com tecido do sofá: duração típica do "sem eco" depois de um eco válido. Longo demais = carro parado à toa; curto demais = volta a acelerar contra a parede. |
 | `vis_fresh_ms` / `yaw_fresh_ms` | 300 / 200 ms | DEMO | `vis` sai a ~10 Hz e `yaw` a ~20 Hz; devem ser ≥ 2–3 períodos e menores que `wd_ms`. Ver no log o atraso real do S9. |
-| `yaw_lead_ms` | 100 ms | DEMO | Antecipa o fim da curva em `giro × lead` (inércia). Se o carro passa do ângulo, aumente; se fica curto, diminua. |
+| `yaw_lead_ms` | 100 ms | DEMO | Antecipa o fim da curva em `giro × lead` (inércia + atraso do yaw). Ler o `{"t":"turn"}` no log: `erro` com o mesmo sinal do `alvo` = passou → aumente; sinal oposto = ficou curta → diminua. |
+| `turn_slow_deg` | 25° | DEMO | Com yaw, faltando menos que isso para o alvo, `v_turn` e `s` caem proporcionais ao erro. Maior = chega mais devagar (curva mais longa). |
+| `turn_k_min` | 0,35 | DEMO | Fração mínima do giro perto do alvo (não deixa parar antes). Se o carro empaca no fim da curva (zona morta), suba. |
 | `none_score_cm` | 45 | DEMO | Nota de uma posição sem eco **quando não há visão fresca** (com visão: livre = `max_range_cm`, bloqueado = `d_stop/2`). |
 
 ## 3. Manobra do controller (`control.*`)

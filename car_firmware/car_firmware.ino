@@ -100,6 +100,8 @@ struct Params {
   // turn_dps = graus/s do carro com v_turn e s=1 (CALIBRAR): so vale sem yaw do celular.
   float scan_deg = 30, scan_step = 15, stop_ms = 300, reverse_ms = 500, turn_dps = 90, look_timeout_ms = 1000;
   float clear_ms = 200, avoid_retries = 2, settle_ms = 150;
+  // curva com yaw: faltando menos de turn_slow_deg, o giro cai proporcional ao erro (fator >= turn_k_min, para nao parar)
+  float turn_slow_deg = 25, turn_k_min = 0.35f;
   // guarda de reentrada
   float guard_window_ms = 20000, guard_max = 2, backoff1_ms = 1000, backoff2_ms = 2000, backoff3_ms = 4000;
   // carro (calibrar com a bateria). trim_left/right: ganho fixo da roda ESQUERDA/DIREITA fisica.
@@ -133,6 +135,7 @@ static const KV PARAM_TABLE[] = {
   {"scan_deg", &P.scan_deg}, {"scan_step", &P.scan_step}, {"stop_ms", &P.stop_ms}, {"reverse_ms", &P.reverse_ms},
   {"turn_dps", &P.turn_dps}, {"look_timeout_ms", &P.look_timeout_ms}, {"clear_ms", &P.clear_ms},
   {"avoid_retries", &P.avoid_retries}, {"settle_ms", &P.settle_ms},
+  {"turn_slow_deg", &P.turn_slow_deg}, {"turn_k_min", &P.turn_k_min},
   {"guard_window_ms", &P.guard_window_ms}, {"guard_max", &P.guard_max},
   {"backoff1_ms", &P.backoff1_ms}, {"backoff2_ms", &P.backoff2_ms}, {"backoff3_ms", &P.backoff3_ms},
   {"trim_left", &P.trim_left}, {"trim_right", &P.trim_right}, {"steer_trim_deg", &P.steer_trim_deg},
@@ -237,6 +240,10 @@ static float scanDeg_[MAX_POS], scanSc[MAX_POS];
 static int scanOrd[MAX_POS], scanNPos = 0, scanIdx = 0;
 static float turnTarget = 0, psi0 = 0, chosenAng = 0;
 static bool turnYaw = false, haveAng = false;
+#define TURN_REPORT_MS 300                 // {"t":"turn"} sai 300 ms depois do fim da curva (conta o giro por inercia)
+static bool turnRepPending = false;
+static uint32_t turnRepT = 0, turnStartT = 0, turnMs = 0;
+static float turnRepAlvo = 0;
 static char why[56] = "";
 
 static char lineBuf[160];
@@ -477,6 +484,12 @@ static bool visUsable(uint32_t now) {                    // so o modo phone usa 
   return mode == MODE_PHONE && visOk && (int32_t)(now - visT) <= (int32_t)P.vis_fresh_ms;
 }
 static bool yawFresh(uint32_t now) { return yawHave && (int32_t)(now - yawT) <= (int32_t)P.yaw_fresh_ms; }
+static float yawPsiNow(uint32_t now) {                   // psi extrapolado pelo giro desde a ultima amostra (~50 ms)
+  int32_t age = (int32_t)(now - yawT);
+  if (age < 0) age = 0;
+  if (age > (int32_t)P.yaw_fresh_ms) age = (int32_t)P.yaw_fresh_ms;
+  return yawPsi + yawR * (float)age / 1000.0f;
+}
 
 static int sectorOf(float deg) {                         // setor da visao mais proximo do angulo (-30..+30 em passos de 15)
   int i = (int)lroundf(deg / 15.0f) + 2;
@@ -721,8 +734,25 @@ static void buildScan(uint32_t now) {
 
 static void startTurn(uint32_t now) {
   turnYaw = yawFresh(now);                               // com yaw: gira ate o delta; sem: pelo tempo (turn_dps)
-  psi0 = yawPsi;
+  psi0 = turnYaw ? yawPsiNow(now) : yawPsi;
+  turnStartT = now;
   goSub(S_CURVA, now);
+}
+
+static void turnEnd(uint32_t now) {                      // fim da curva: o relatorio sai TURN_REPORT_MS depois
+  turnRepPending = true; turnRepT = now; turnMs = now - turnStartT; turnRepAlvo = turnTarget;
+}
+
+static void turnReportTask(uint32_t now) {               // {"t":"turn","alvo","girou","erro"}: erro = girou - alvo
+  if (!turnRepPending || now - turnRepT < TURN_REPORT_MS) return;
+  turnRepPending = false;
+  if (yawFresh(now)) {
+    float g = yawPsi - psi0;
+    emitf("{\"t\":\"turn\",\"alvo\":%.0f,\"girou\":%.1f,\"erro\":%.1f,\"ms\":%lu,\"yaw\":%d}",
+          turnRepAlvo, g, g - turnRepAlvo, (unsigned long)turnMs, turnYaw ? 1 : 0);
+  } else {
+    emitf("{\"t\":\"turn\",\"alvo\":%.0f,\"girou\":null,\"erro\":null,\"ms\":%lu,\"yaw\":0}", turnRepAlvo, (unsigned long)turnMs);
+  }
 }
 
 // escolhe o MELHOR ANGULO. forced = angulo ja aceito (sugestao do celular com folga); NAN = escolher entre as notas.
@@ -824,17 +854,24 @@ static void autoStep(uint32_t now, float* v, float* s) {
       return;
     case S_CURVA: {
       float dir = turnTarget > 0 ? 1.0f : -1.0f, absT = absf(turnTarget);
-      *v = P.v_turn; *s = dir;
-      bool done;
-      if (turnYaw && yawFresh(now)) {                    // gira ate |delta psi| >= alvo - giro*lead
+      float tdps = P.turn_dps > 1 ? P.turn_dps : 1;
+      float k = 1.0f;
+      bool done, yawOk = turnYaw && yawFresh(now);
+      if (yawOk) {                                       // gira ate |delta psi| >= alvo - giro*lead
+        float prog = (yawPsiNow(now) - psi0) * dir;      // graus ja girados no sentido do alvo (psi extrapolado)
         float lead = yawR * dir;
         if (lead < 0) lead = 0;
-        done = (yawPsi - psi0) * dir >= absT - lead * P.yaw_lead_ms / 1000.0f;
+        done = prog >= absT - lead * P.yaw_lead_ms / 1000.0f;
+        float slow = P.turn_slow_deg > 0.1f ? P.turn_slow_deg : 0.1f;
+        k = clampf((absT - prog) / slow, clampf(P.turn_k_min, 0.05f, 1.0f), 1.0f);   // perto do alvo: gira mais devagar
       } else {
-        done = el >= (uint32_t)(absT / (P.turn_dps > 1 ? P.turn_dps : 1) * 1000.0f);    // sem yaw: turn_ms = alvo / turn_dps
+        done = el >= (uint32_t)(absT / tdps * 1000.0f);  // sem yaw: turn_ms = alvo / turn_dps (velocidade cheia)
       }
-      if (!done && el >= (uint32_t)(1.5f * absT / (P.turn_dps > 1 ? P.turn_dps : 1) * 1000.0f + 300.0f)) done = true;   // timeout
-      if (done) { cst = C_VARREDURA; sub = S_NONE; clearActive = false; setWhy("pos-desvio"); *v = P.v_slow; *s = 0; }
+      *v = P.v_turn * k; *s = dir * k;
+      float tout = 1.5f * absT / tdps * 1000.0f + 300.0f;
+      if (turnYaw) tout += P.turn_slow_deg / (tdps * clampf(P.turn_k_min, 0.05f, 1.0f)) * 1000.0f;   // a desaceleracao demora
+      if (!done && el >= (uint32_t)tout) done = true;    // timeout
+      if (done) { turnEnd(now); cst = C_VARREDURA; sub = S_NONE; clearActive = false; setWhy("pos-desvio"); *v = P.v_slow; *s = 0; }
       return;
     }
     case S_PRESO: {                                       // preso: sai quando o centro libera
@@ -973,7 +1010,7 @@ static void setArmed(bool on, uint32_t now) {
     armPending = false; armed = false; delegated = false; avoidReq = false; avoidHintOk = false;
     curL = curR = rampL = rampR = 0; cmdV = cmdS = 0;
     if (diagTest != D_NONE) diagFinish(now, "desarmado");
-    diagHold = false;
+    diagHold = false; turnRepPending = false;
     holdOn = false; holdMode = H_OFF; holdCorr = 0;
     saveTrim();                                            // trim aprendido do rumo -> NVS
     mode = DEFAULT_MODE; resetAuto(now);
@@ -1223,6 +1260,7 @@ void loop() {
     else phoneStep(now, &v, &s);
   }
   driveApply(now, v, s);
+  turnReportTask(now);
   printHeartbeat(now);
   ledTask(now);
 }

@@ -121,6 +121,8 @@ function handle(m){
     document.querySelectorAll('[data-g]').forEach(b=>b.classList.toggle('on',b.dataset.g===m.g&&b.dataset.src===(m.src||'sensor')));
     addLog('motivacao: '+m.g+(m.g==='explorar'?' ('+(m.src||'sensor')+')':''),'var(--ac)');
   }else if(m.t==='diag'){diag(m);
+  }else if(m.t==='turn'){addLog('[curva] alvo '+m.alvo+'° girou '+(m.girou==null?'? (sem yaw)':m.girou+'° erro '+m.erro+'°'+
+    (Math.abs(m.erro)>=5?(m.erro*m.alvo>0?' (PASSOU: suba yaw_lead_ms)':' (CURTA: baixe yaw_lead_ms)'):'')),'var(--ac)');
   }else if(m.t==='log'){addLog('[esp32] '+m.msg);
   }else if(m.t==='hello'){addLog('ESP32 iniciou (reset: '+m.reset+')',m.reset==='BROWNOUT'?'var(--er)':null);}
 }
