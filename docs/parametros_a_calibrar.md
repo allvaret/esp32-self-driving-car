@@ -136,17 +136,30 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 - `ground.py` e `edge_probe.py`: constantes fora do `Config`.
 - `MockRangeHead`: valores padrão (`settle_s`, `max_range_m`, `noise_m`) devem vir da bancada.
 - Detecção de obstáculo móvel pela taxa de variação da leitura: não implementada.
-## Rumo em linha reta (`heading.*`, `control/heading.py`)
+## Rumo em linha reta NO ESP32 (`control.hold_*` / `trim_*` = `Params` do firmware 0.5)
 
-| Parâmetro | Padrão | Status | Como calibrar |
+A correção roda no ESP32 nos dois modos (sensor e visão); o brain manda `s = 0` em reta. Unidades de **roda**:
+`0,1` = a roda lenta recebe +0,1 de comando (com `pwm_min/max` 130/150, +2 pontos de duty).
+`s_corr = -(hold_kp·giro + hold_ki·psi_trecho) + trim`, limitado a `±hold_s_max`; `> 0` = mais força na roda esquerda.
+
+| Parâmetro (config / firmware) | Padrão | Status | Como calibrar |
 |---|---|---|---|
-| `heading.kp_rate` | 0,005 | DEMO | Steer por °/s de giro. Se o carro balança de um lado a outro em reta, diminua. |
-| `heading.kh` | 0,02 | DEMO | Steer por grau de rumo acumulado; é ele que cancela o desvio fixo. Se demora a endireitar, aumente aos poucos. |
-| `heading.s_max` | 0,4 | DEMO | Teto da correção. Precisa ser maior que o desvio fixo do carro (em unidades de steer). |
-| `heading.engage_delay_s` | 0,4 s | DEMO | Ignora a arrancada (kick + escalonamento dos motores). |
-| `heading.stale_s` | 0,3 s | DEMO | Sem amostra do giroscópio por esse tempo, não corrige. |
+| `hold_kp` | 0,01 por °/s | DEMO | Amortece o giro. Se o carro balança de um lado a outro em reta, diminua. |
+| `hold_ki` | 0,05 por ° | DEMO | Puxa o rumo de volta ao do início do trecho. Se demora a endireitar, aumente aos poucos. |
+| `hold_s_max` | 2,0 | DEMO | Teto da correção. No simulador, uma roda com 65 % de eficiência e zona morta 5 pontos maior pede ~1,3. Ver `hc` no `state`: se fica colado em ±`hold_s_max`, falta autoridade (suba `hold_pwm_max` ou `pwm_max`). |
+| `hold_s_eps` | 0,05 | DEMO | `|s|` abaixo disso é reta. |
+| `hold_delay_s` / `hold_delay_ms` | 0,1 s | DEMO | O PI entra no máximo 0,1 s depois da arrancada (o trim aprendido vale desde o 1º ciclo). |
+| `hold_psi_max_deg` / `hold_psi_max` | 30° | DEMO | Anti-windup do `psi` do trecho (um esbarrão não vira correção enorme). |
+| `hold_pwm_max` | 200 (duty 0..255) | DEMO | Teto de duty da roda lenta **corrigida**; pode passar do `pwm_max` (que limita só a velocidade nominal). Abaixe se der brownout. |
+| `trim_rate` | 0,5 /s | DEMO | Velocidade com que o trim absorve o termo integral. Maior = aprende em menos trechos, mas segue mais as perturbações. |
+| `trim_max` | 1,5 | DEMO | Limite do trim. Gravado na NVS ao desarmar, lido no boot. Zerar: `{"t":"trim","v":0}`, `trim 0` na serial ou o botão do diagnóstico. |
 
-O `psi` que o celular manda ao ESP32 (`{"t":"yaw"}`) vem de outro integrador (`YawIntegrator`, **sem o limite de ±20°**), com o mesmo filtro e a mesma estimativa de viés (feita com as rodas paradas, lida do `state` do ESP32).
+Conferir no log (`state`): `hold` = 2 andando em reta com o celular conectado; `hc` estável; `trim` muda pouco de uma
+corrida para a outra. O trim depende da velocidade (as zonas mortas pesam mais em `v_slow`); o PI cobre a diferença.
+
+O `psi` que o celular manda (`{"t":"yaw"}`) vem do `YawIntegrator` (sem limite), com o filtro e a estimativa de viés de
+`heading.*` (viés estimado com as rodas paradas, lidas do `state`). O `HeadingHold` (`heading.kp_rate`, `kh`, `s_max`...)
+**não está mais no caminho ao vivo**; os parâmetros seguem no `config.py` por causa dele e dos testes.
 
 Conferir no app antes de rodar: a faixa de status mostra `psi=...` e `rumo: giro=...`. Girar o carro
 à mão para a DIREITA tem que dar giro positivo; se der negativo, inverta o sinal em `YawSensor.kt`.

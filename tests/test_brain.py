@@ -118,7 +118,7 @@ def test_parar_resets_goal_heading_and_integrator():
     lk.state["armed"] = False
     clk.adv(0.1)
     brain.step(_info())
-    assert brain._last_key is None and brain._yaw.psi == 0.0 and brain._heading.last.get("on") is False
+    assert brain._last_key is None and brain._yaw.psi == 0.0
     lk.goal, lk.src = "explorar", "visao"          # nova motivacao: manda mode de novo, nao arma
     clk.adv(0.1)
     n = len(lk.of("mode"))
@@ -158,6 +158,22 @@ def test_src_visao_drives_and_asks_avoid_with_freest_sector():
     assert brain._free_sector_deg((50, 50, 0, 50, 50)) == -15      # empate: menor |ang|, depois esquerda
     assert brain._free_sector_deg((70, 60, 0, 60, 70)) == -30
     print("ok  src=visao: v pela visao, avoid com o setor mais livre, limitado a cada 2 s")
+
+
+def test_drive_is_straight_no_heading_correction_in_brain():
+    lk, clk = _setup("explorar", "visao", armed=True)
+    lk.state.update(L=0.35, R=0.35)
+    for _ in range(40):                            # o carro girando 120 graus/s para a direita por 0,8 s
+        brain.on_gyro(120.0)
+        brain.step(_info("LIVRE"))
+        clk.adv(0.02)
+    ds = lk.of("drive")
+    assert ds and all(d["s"] == 0.0 for d in ds), ds[-3:]
+    assert lk.of("yaw")[-1]["r"] > 50              # o rumo vai ao ESP32, que e quem corrige
+    assert not hasattr(brain, "_heading")
+    lk.state.update(hold=2, hc=-1.25, trim=-1.2)
+    assert "corrigindo" in brain.status() and "trim=-1.20" in brain.status()
+    print("ok  brain manda s = 0 em reta (o ESP32 corrige o rumo); status mostra hold/corr/trim do ESP32")
 
 
 def test_src_sensor_sends_vis_but_no_drive():

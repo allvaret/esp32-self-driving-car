@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.4.1
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.5.0
  *
  * CAMINHO 1: o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
  * a OPINIAO da visao ({"t":"vis"}) e o rumo do giroscopio ({"t":"yaw"}). Quem para, varre e desvia e este arquivo.
@@ -22,6 +22,7 @@
  *   - anda para frente SO com leitura central fresca, classe nao-suspeita e mediana >= hard_stop_cm;
  *   - phone: sem comando `drive` por wd_ms -> ESP32 assume no modo sensor (fallback auto);
  *   - re continua no maximo max_rev_ms; partida escalonada e nunca com o servo se movendo.
+ *   - RUMO EM RETA corrigido aqui (holdStep), nos dois modos, com o yaw do celular e um trim aprendido (NVS).
  *   - goal "parar", arm false ou BOOT desarmando: reset completo (modo padrao, FSM, RTC limpo).
  * Fiacao, comandos e testes de bancada: docs/protocolo_ws.md
  * Valores [DEMO]: calibrar (ver docs/parametros_a_calibrar.md). Mantenha coerente com config.py.
@@ -35,9 +36,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <esp_system.h>
+#include <Preferences.h>        // NVS: guarda o trim aprendido do rumo entre desligamentos
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.4.1"
+#define FW_VERSION "car_firmware 0.5.0"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -109,6 +111,15 @@ struct Params {
   float wd_ms = 500, fresh_ms = 400, max_rev_ms = 1500;
   // visao e rumo vindos do celular (so phone usa vis). vis_free_min: setor 0 (0..100) a partir do qual a visao diz "livre".
   float vis_fresh_ms = 300, yaw_fresh_ms = 200, vis_free_min = 50, suspect_ms = 1500, yaw_lead_ms = 100;
+  // RUMO EM RETA (correcao no ESP32, modos auto e phone). Trecho reto = |s| < hold_s_eps e v > 0.
+  //   s_corr = -(hold_kp * giro + hold_ki * psi_trecho) + trim aprendido, limitado a +-hold_s_max
+  // em UNIDADES DE RODA (0,1 = a roda lenta recebe +0,1 de comando; com pwm 130..150, 2 pontos de duty).
+  // s_corr > 0 = mais forca na roda ESQUERDA (corrige um carro que puxa para a esquerda).
+  // A roda lenta SOBE primeiro (ate hold_pwm_max de duty); a rapida so desce se a lenta saturar.
+  float hold_kp = 0.01f, hold_ki = 0.05f, hold_s_max = 2.0f, hold_s_eps = 0.05f, hold_delay_ms = 100;
+  float hold_psi_max = 30, hold_pwm_max = 200;
+  // trim aprendido: integrador lento do termo hold_ki*psi (por s), persiste entre trechos e em NVS.
+  float trim_rate = 0.5f, trim_max = 1.5f;
   float sensor_trim_deg = 0;              // [DEMO] corrige o zero do servo do sensor
   float fallback_auto = 1;                // 1 = sem celular, ESP32 segue so com o sensor; 0 = para
 };
@@ -132,6 +143,9 @@ static const KV PARAM_TABLE[] = {
   {"vis_fresh_ms", &P.vis_fresh_ms}, {"yaw_fresh_ms", &P.yaw_fresh_ms}, {"vis_free_min", &P.vis_free_min},
   {"suspect_ms", &P.suspect_ms}, {"yaw_lead_ms", &P.yaw_lead_ms},
   {"sensor_trim_deg", &P.sensor_trim_deg}, {"fallback_auto", &P.fallback_auto},
+  {"hold_kp", &P.hold_kp}, {"hold_ki", &P.hold_ki}, {"hold_s_max", &P.hold_s_max}, {"hold_s_eps", &P.hold_s_eps},
+  {"hold_delay_ms", &P.hold_delay_ms}, {"hold_psi_max", &P.hold_psi_max}, {"hold_pwm_max", &P.hold_pwm_max},
+  {"trim_rate", &P.trim_rate}, {"trim_max", &P.trim_max},
 };
 static const int N_PARAMS = sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]);
 
@@ -172,11 +186,21 @@ static bool avoidReq = false;              // phone: celular pediu desvio
 static bool avoidHintOk = false;           // ... com angulo sugerido
 static float avoidHintDeg = 0;
 
-static float curL = 0, curR = 0;           // saida da roda ESQUERDA / DIREITA (apos rampa)
+static float curL = 0, curR = 0;           // saida da roda ESQUERDA / DIREITA (rampa + correcao de rumo)
+static float rampL = 0, rampR = 0;         // comando base (v, s) depois da rampa, sem a correcao de rumo
 static uint32_t tLastApply = 0;
 static bool revActive = false;
 static uint32_t tRevStart = 0;
 static float lastSteerOut = 999;
+
+// rumo em reta (holdStep)
+enum { H_OFF = 0, H_TRIM = 1, H_PI = 2 };   // fora de reta | so trim (sem yaw fresco ou arrancando) | malha fechada
+static int holdMode = H_OFF;
+static bool holdOn = false, holdHavePsi0 = false, holdNoCorr = false;   // holdNoCorr: diagnostico "reto SEM correcao"
+static uint32_t holdT0 = 0, holdTLearn = 0;
+static float holdPsi0 = 0, holdCorr = 0;
+static float holdTrim = 0, holdTrimSaved = 0;  // trim aprendido (unidades de roda) e o ultimo gravado em NVS
+static Preferences prefs;
 
 // maquina de estados
 enum { C_FRENTE = 0, C_VARREDURA = 1, C_DESVIO = 2 };
@@ -501,6 +525,44 @@ static float slewTo(float cur, float target, float maxStep) {
   return absf(d) <= maxStep ? target : cur + (d > 0 ? maxStep : -maxStep);
 }
 
+// ---- rumo em reta: correcao no ESP32 (o celular manda s = 0 na reta; nao ha mais correcao no brain) ----
+// Trecho reto = v > 0 e |s| < hold_s_eps (FRENTE, VARREDURA, drive reto do celular). Corrige desde a arrancada:
+// o trim aprendido vale ja no 1o ciclo; o PI entra apos hold_delay_ms se o yaw estiver fresco (sem yaw: so o trim).
+// psi_trecho = psi desde o inicio do trecho (anti-windup: +-hold_psi_max). O trim integra devagar o termo
+// hold_ki*psi_trecho e NAO zera entre trechos (fica o desvio fixo das rodas). Retorna a correcao (unid. de roda).
+static float holdStep(uint32_t now, float v, float s) {
+  bool straight = v > 0.02f && absf(s) < P.hold_s_eps;
+  if (!straight) { holdOn = false; holdMode = H_OFF; holdCorr = 0; return 0; }
+  if (!holdOn) { holdOn = true; holdT0 = now; holdTLearn = now; holdHavePsi0 = false; }
+  float dt = (float)(now - holdTLearn) / 1000.0f;
+  holdTLearn = now;
+  if (holdNoCorr) { holdMode = H_OFF; holdCorr = 0; return 0; }
+  bool fresh = yawFresh(now);
+  if (fresh && !holdHavePsi0) { holdHavePsi0 = true; holdPsi0 = yawPsi; }
+  float corr = holdTrim;
+  holdMode = H_TRIM;
+  if (fresh && holdHavePsi0 && now - holdT0 >= (uint32_t)P.hold_delay_ms) {
+    float psiT = yawPsi - holdPsi0;
+    if (psiT > P.hold_psi_max) { holdPsi0 = yawPsi - P.hold_psi_max; psiT = P.hold_psi_max; }
+    else if (psiT < -P.hold_psi_max) { holdPsi0 = yawPsi + P.hold_psi_max; psiT = -P.hold_psi_max; }
+    float iTerm = -P.hold_ki * psiT;
+    corr += -P.hold_kp * yawR + iTerm;
+    if (dt > 0 && dt < 0.2f) holdTrim = clampf(holdTrim + P.trim_rate * iTerm * dt, -P.trim_max, P.trim_max);
+    holdMode = H_PI;
+  }
+  holdCorr = clampf(corr, -P.hold_s_max, P.hold_s_max);
+  return holdCorr;
+}
+
+static void saveTrim() {                                 // so ao desarmar (poucas gravacoes na flash)
+  if (absf(holdTrim - holdTrimSaved) < 0.01f) return;
+  prefs.begin("carro", false);
+  prefs.putFloat("trim", holdTrim);
+  prefs.end();
+  holdTrimSaved = holdTrim;
+  emitf("{\"t\":\"log\",\"msg\":\"trim do rumo salvo: %.3f\"}", holdTrim);
+}
+
 static void driveApply(uint32_t now, float v, float s) {
   if (!armed) { v = 0; s = 0; }
   bool servoMoving = (now - tAim) < (uint32_t)P.settle_ms;
@@ -534,12 +596,34 @@ static void driveApply(uint32_t now, float v, float s) {
   float dt = (float)(now - tLastApply) / 1000.0f;
   tLastApply = now;
   float step = P.slew_per_s * (dt > 0.2f ? 0.2f : dt);
-  curL = slewTo(curL, L, step);
-  curR = slewTo(curR, R, step);
-  // escalonamento: a roda ESQUERDA (ENB) parte primeiro; a DIREITA (ENA) espera KICK_STAGGER_MS (mesma ordem fisica de antes)
-  motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now, 0);
-  motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now,
-             kickL.dir != 0 ? KICK_STAGGER_MS : 0);
+  rampL = slewTo(rampL, L, step);                        // a RAMPA vale para o comando base (v, s)...
+  rampR = slewTo(rampR, R, step);
+  curL = rampL; curR = rampR;
+#if STEER_MODE == STEER_DIFFERENTIAL
+  // ... e a correcao de rumo entra POR CIMA, sem esperar a rampa: na arrancada a roda forte ja anda no pwm_min e a
+  // fraca nao; se a correcao subisse na rampa (2/s) o carro giraria em toda partida.
+  float hc = holdStep(now, v, s);                        // 0 fora de trecho reto
+  if (hc != 0) {                                         // sobe a roda LENTA; a rapida so desce se a lenta saturar
+    float span = P.pwm_max - P.pwm_min;
+    float lim = span > 1 ? clampf((P.hold_pwm_max - P.pwm_min) / span, 1.0f, 10.0f) : 1.0f;   // teto: hold_pwm_max
+    float* slow = hc > 0 ? &curL : &curR;
+    float* fast = hc > 0 ? &curR : &curL;
+    *slow += absf(hc);
+    if (*slow > lim) { *fast -= *slow - lim; *slow = lim; }
+    if (*fast < 0.05f) *fast = 0.05f;                    // a correcao nunca para nem inverte uma roda
+  }
+#endif
+  // escalonamento: parte primeiro a roda com MAIS comando (a lenta, quando a correcao atua); a outra espera
+  // KICK_STAGGER_MS. Sem correcao (L = R) a ESQUERDA (ENB) parte primeiro, como antes.
+  if (absf(curL) >= absf(curR)) {
+    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now, 0);
+    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now,
+               kickL.dir != 0 ? KICK_STAGGER_MS : 0);
+  } else {
+    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now, 0);
+    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now,
+               kickR.dir != 0 ? KICK_STAGGER_MS : 0);
+  }
 }
 
 // ============================ MAQUINA DE ESTADOS ============================
@@ -798,7 +882,9 @@ static void setArmed(bool on, uint32_t now) {
   if (on) { armPending = true; armAt = now + ARM_DELAY_MS; emitf("{\"t\":\"log\",\"msg\":\"armando em %d s\"}", ARM_DELAY_MS / 1000); }
   else {
     armPending = false; armed = false; delegated = false; avoidReq = false; avoidHintOk = false;
-    curL = curR = 0; cmdV = cmdS = 0;
+    curL = curR = rampL = rampR = 0; cmdV = cmdS = 0;
+    holdOn = false; holdMode = H_OFF; holdCorr = 0;
+    saveTrim();                                            // trim aprendido do rumo -> NVS
     mode = DEFAULT_MODE; resetAuto(now);
     rtcArmed = 0; rtcMode = DEFAULT_MODE; rtcGoal[0] = 0;
     strncpy(netGoal, "parar", sizeof(netGoal) - 1); strncpy(netSrc, "sensor", sizeof(netSrc) - 1);
@@ -840,12 +926,12 @@ static void printHeartbeat(uint32_t now) {
   if (haveAng) snprintf(ang, sizeof(ang), "%.0f", chosenAng); else strcpy(ang, "null");
   emitf("{\"t\":\"state\",\"mode\":\"%s\",\"src\":\"%s\",\"armed\":%s,\"esp\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
         "\"cls\":\"%s\",\"ang\":%s,\"vis\":%d,\"yaw\":%d,"
-        "\"L\":%.2f,\"R\":%.2f,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
+        "\"L\":%.2f,\"R\":%.2f,\"hold\":%d,\"hc\":%.2f,\"trim\":%.2f,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
         mode == MODE_AUTO ? "auto" : "phone", mode == MODE_AUTO ? "sensor" : "visao",
         armed ? "true" : "false", delegated ? "true" : "false",
         fsm ? CN[cst] : "-", fsm ? SN[sub] : "",
         centerCm, servoDeg, haveC ? KN[centerClass(now)] : "-", ang, visUsable(now) ? 1 : 0, yawFresh(now) ? 1 : 0,
-        curL, curR, why, (unsigned long)(now / 1000),
+        curL, curR, holdMode, holdCorr, holdTrim, why, (unsigned long)(now / 1000),
         (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?", (unsigned long)rtcRestores);
 }
 
@@ -883,6 +969,11 @@ static void handleJson(const char* line, uint32_t now) {
     if (jsonBool(line, "on", &on)) setArmed(on, now);
   } else if (strcmp(t, "ping") == 0) {
     emitf("{\"t\":\"pong\"}");
+  } else if (strcmp(t, "trim") == 0) {         // {"t":"trim","v":0}: define (e grava) o trim aprendido do rumo
+    if (jsonNum(line, "v", &x)) {
+      holdTrim = clampf(x, -P.trim_max, P.trim_max); saveTrim();
+      emitf("{\"t\":\"log\",\"msg\":\"trim do rumo = %.3f\"}", holdTrim);
+    }
   } else if (strcmp(t, "avoid") == 0) {        // celular viu obstaculo: o ESP32 faz o desvio (deg = angulo sugerido)
     if (mode == MODE_PHONE && armed) {
       avoidReq = true;
@@ -931,9 +1022,11 @@ static void handleText(char* line, uint32_t now) {         // comandos digitavei
   } else if (sscanf(line, "aim %f", &x) == 1) { aimTo(x, now); Serial.printf("aim %.1f\n", x); }
   else if (sscanf(line, "drive %f %f", &x, &y) == 2) { cmdV = x; cmdS = y; lastDriveT = now; Serial.printf("drive %.2f %.2f\n", x, y); }
   else if (strcmp(line, "status") == 0) { tHeartbeat = 0; printHeartbeat(now); }
+  else if (sscanf(line, "trim %f", &x) == 1) { holdTrim = clampf(x, -P.trim_max, P.trim_max); saveTrim(); Serial.printf("trim = %.3f\n", holdTrim); }
+  else if (strcmp(line, "trim") == 0) Serial.printf("trim = %.3f (gravado %.3f)\n", holdTrim, holdTrimSaved);
   else if (strcmp(line, "avoid") == 0) { if (mode == MODE_PHONE && armed) { avoidReq = true; avoidHintOk = false; } }
   else if (strcmp(line, "help") == 0)
-    Serial.println("go | stop | mode auto|phone | set <chave> <valor> | get | aim <graus> | drive <v> <s> | avoid | status");
+    Serial.println("go | stop | mode auto|phone | set <chave> <valor> | get | aim <graus> | drive <v> <s> | avoid | status | trim [valor]");
 }
 
 static void pollSerial(uint32_t now) {
@@ -971,6 +1064,9 @@ void setup() {
   pwmAttach(PIN_ENA, CH_ENA, MOTOR_PWM_HZ, 8);
   pwmAttach(PIN_ENB, CH_ENB, MOTOR_PWM_HZ, 8);
 #endif
+  prefs.begin("carro", true);                              // trim aprendido do rumo (0 na 1a vez)
+  holdTrim = holdTrimSaved = clampf(prefs.getFloat("trim", 0.0f), -P.trim_max, P.trim_max);
+  prefs.end();
   uint32_t now = millis();
   aimTo(0, now);
   lastDriveT = now; tLastApply = now;

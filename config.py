@@ -49,6 +49,17 @@ class ControlConfig:
     vis_free_min: float = 50.0    # setor 0 da visao (0..100) a partir do qual "livre"; abaixo = bloqueado/suspeito
     suspect_s: float = 1.5        # sem eco ate X s depois de leitura valida < d_clear = suspeito
     yaw_lead_s: float = 0.1       # antecipa o fim da curva em giro*lead (compensa a inercia)
+    # --- rumo em reta NO ESP32 (firmware: hold_*, trim_*). Unidades de RODA: 0,1 = +0,1 de comando na roda lenta ---
+    # s_corr = -(hold_kp*giro + hold_ki*psi_trecho) + trim aprendido, limitado a +-hold_s_max; > 0 = mais forca na esquerda
+    hold_kp: float = 0.01         # por grau/s de giro
+    hold_ki: float = 0.05         # por grau de rumo desde o inicio do trecho reto
+    hold_s_max: float = 2.0       # teto da correcao (compensa ~35% de diferenca entre as rodas)
+    hold_s_eps: float = 0.05      # |s| abaixo disso = trecho reto
+    hold_delay_s: float = 0.1     # o PI entra no maximo 0,1 s depois da arrancada (o trim vale desde o inicio)
+    hold_psi_max_deg: float = 30.0    # anti-windup do psi do trecho
+    hold_pwm_max: float = 200.0   # teto de duty (0..255) da roda lenta corrigida (pode passar do pwm_max)
+    trim_rate: float = 0.5        # por s: velocidade com que o trim absorve o termo hold_ki*psi
+    trim_max: float = 1.5         # limite do trim aprendido (salvo em NVS ao desarmar)
     # --- bordas (hipoteses, nao validadas) ---
     edge_near_h: float = 0.20     # h_cen <= isso (borda perto) ...
     edge_cov_min: float = 0.50    # ... com cobertura >= isso -> edge_near
@@ -118,6 +129,12 @@ class Config:
                   "vis_fresh_s", "yaw_fresh_s", "suspect_s", "yaw_lead_s"):
             if getattr(c, n) < 0:
                 raise ValueError(f"control.{n} nao pode ser negativo")
+        for n in ("hold_kp", "hold_ki", "hold_s_max", "hold_s_eps", "hold_delay_s", "hold_psi_max_deg",
+                  "trim_rate", "trim_max"):
+            if getattr(c, n) < 0:
+                raise ValueError(f"control.{n} nao pode ser negativo")
+        if not 0 < c.hold_pwm_max <= 255:
+            raise ValueError("control.hold_pwm_max deve estar em (0, 255]")
         if not c.guard_backoff_s or min(c.guard_backoff_s) <= 0:
             raise ValueError("control.guard_backoff_s precisa de valores > 0")
         if not 0 < d.r_obst < d.r_exit <= d.r_free:

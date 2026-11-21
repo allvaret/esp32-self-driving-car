@@ -15,6 +15,8 @@
 #include <vector>
 
 uint64_t g_us = 0;
+std::map<std::string, float> g_nvs;
+int g_nvs_writes = 0;
 WiFiClass WiFi;
 int g_ws_clients = 0;
 unsigned millis_for_ws() { return millis(); }
@@ -34,6 +36,8 @@ static float W_dps = 90.0f;                                // giro real do carro
 static bool W_yaw = false;                                 // injeta {"t":"yaw"} a cada 50 ms
 static double W_psi = 0, W_rate = 0;
 static float W_uL = 0, W_uR = 0;                           // velocidade de cada roda FISICA (normalizada)
+static float W_lag = 0;                                    // atraso (ms) do {"t":"yaw"} ate chegar ao ESP32 (--yaw-lag)
+static float W_tau = 0;                                    // inercia (ms): o giro segue as rodas com 1a ordem (--tau)
 
 // ---- fiacao FISICA do carro (informada pelo dono; NAO vem do firmware) ----
 // OUT1/OUT2 (ENA, IN1/IN2) = roda dianteira DIREITA; OUT3/OUT4 (ENB, IN3/IN4) = roda dianteira ESQUERDA.
@@ -116,6 +120,9 @@ int main(int argc, char** argv) {
     else if (a == "--far") { f(W_far_t0); f(W_far_t1); }
     else if (a == "--world-dps") f(W_dps);
     else if (a == "--yaw") W_yaw = true;
+    else if (a == "--yaw-lag") f(W_lag);
+    else if (a == "--tau") f(W_tau);
+    else if (a == "--nvs") { std::string k = argv[++i]; g_nvs[k] = (float)atof(argv[++i]); }
     else if (a == "--wheel-left") { f(W_effL); f(W_dzL); }
     else if (a == "--wheel-right") { f(W_effR); f(W_dzR); }
     else if (a == "--ws") g_ws_clients = atoi(argv[++i]);
@@ -127,6 +134,7 @@ int main(int argc, char** argv) {
   if (inFile) { std::ifstream fi(inFile); std::string line;
     while (std::getline(fi, line)) { size_t tab = line.find('\t'); if (tab == std::string::npos) continue;
       script.push_back({(uint32_t)atoi(line.substr(0, tab).c_str()), line.substr(tab + 1)}); } }
+  std::deque<std::pair<uint32_t, std::string>> yawQ;
   size_t si = 0; uint32_t next_tr = 0, next_yaw = 0; int pc = -1, ps = -1, pa = -1; uint64_t last_us = 0;
   setup();
   while (millis() < t_end) {
@@ -142,19 +150,25 @@ int main(int argc, char** argv) {
     double dt = (double)(g_us - last_us) / 1e6; last_us = g_us;
     W_uL = wheelU(PIN_ENB, PIN_IN3, PIN_IN4, W_effL, W_dzL);   // roda ESQUERDA (OUT3/OUT4)
     W_uR = wheelU(PIN_ENA, PIN_IN1, PIN_IN2, W_effR, W_dzR);   // roda DIREITA (OUT1/OUT2)
-    W_rate = W_dps * (double)(W_uL - W_uR) / 1.2;          // + = direita (roda esquerda mais rapida)
+    double cmdRate = W_dps * (double)(W_uL - W_uR) / 1.2;  // + = direita (roda esquerda mais rapida)
+    W_rate = W_tau > 0 ? W_rate + (cmdRate - W_rate) * (dt * 1000.0) / (W_tau + dt * 1000.0) : cmdRate;
     W_psi += W_rate * dt;
     if (W_yaw && millis() >= next_yaw) { next_yaw = millis() + 50;
       char b[96]; snprintf(b, sizeof b, "{\"t\":\"yaw\",\"psi\":%.2f,\"r\":%.2f}", W_psi, W_rate);
-      for (char c : std::string(b)) g_in.push_back(c); g_in.push_back('\n'); }
+      yawQ.push_back({millis() + (uint32_t)W_lag, b}); }
+    while (!yawQ.empty() && yawQ.front().first <= millis()) {
+      for (char c : yawQ.front().second) g_in.push_back(c);
+      g_in.push_back('\n'); yawQ.pop_front(); }
     if (cst != pc || sub != ps || (int)armed != pa) { printf("EV %u cst=%d sub=%d subn=%s armed=%d psi=%.2f why=%s\n", millis(), cst, sub, SUBN[sub], armed, W_psi, why); pc = cst; ps = sub; pa = armed; }
     if (millis() >= next_tr) { next_tr = millis() + 100;
       printf("TR %u armed=%d mode=%d cst=%d sub=%d subn=%s curL=%.3f curR=%.3f servo=%.1f center=%.1f cls=%d delegated=%d psi=%.1f "
-             "enaPWM=%d enbPWM=%d in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f\n",
+             "enaPWM=%d enbPWM=%d in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f hold=%d hc=%.3f trim=%.3f\n",
              millis(), armed, mode, cst, sub, SUBN[sub], curL, curR, servoDeg, centerCm, haveC ? centerClass(millis()) : -1, (int)delegated, W_psi,
              g_pwm_pin[PIN_ENA], g_pwm_pin[PIN_ENB],
              g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4], g_pwm_pin[PIN_STEER_SERVO],
-             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate); }
+             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate, holdMode, holdCorr, holdTrim); }
   }
+  for (auto& kv : g_nvs) printf("NVS %s=%.4f\n", kv.first.c_str(), kv.second);
+  printf("NVSW %d\n", g_nvs_writes);
   return 0;
 }

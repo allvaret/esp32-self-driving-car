@@ -1,5 +1,9 @@
 """control/heading.py - segura o rumo em linha reta com o giroscopio (malha fechada).
 
+ATENCAO: desde o firmware 0.5 a correcao de rumo roda NO ESP32 (holdStep, nos dois modos, com trim
+aprendido em NVS). O HeadingHold abaixo NAO esta mais no caminho ao vivo (brain manda s = 0 na reta);
+fica como referencia e para os testes. O YawIntegrator continua no caminho (psi/r enviados ao ESP32).
+
 Por que existe: os dois lados do carro nao rendem igual (caixa/embreagem com defeito) e a
 diferenca muda com carga, bateria e velocidade; um trim fixo nao segurou. Aqui o carro MEDE
 o quanto esta girando e corrige o steer em tempo real.

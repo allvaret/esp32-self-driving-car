@@ -47,12 +47,23 @@ Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garant
 | `{"t":"think","msg":"...","state":"LIVRE","conf":0.8}` | so repassa a todos (o brain narra so a VISAO) |
 | `{"t":"calibrar"}` | so repassa; o cerebro reaprende a cor do chao (a opiniao fica `ok:0` enquanto isso). O visor manda ao clicar em "Explorar: visao" |
 | `{"t":"ping"}` | responde `pong` |
+| `{"t":"trim","v":0}` | define e grava na NVS o trim aprendido do rumo (unidades de roda) |
 
 ### Reset completo
 `goal parar`, `arm false` e o BOOT desarmando levam tudo ao estado inicial: `armed`/`delegated` falsos, modo padrao
 (`auto`), FSM zerada (`resetAuto`), comandos zerados, e **limpam `rtcArmed`, `rtcMode` e `rtcGoal`** (um reset de
 hardware depois disso nao retoma). O ESP32 emite `{"t":"goal","g":"parar"}` para o visor e o celular acompanharem.
-O brain, ao ver o goal `parar` ou o `armed:false`, zera o goal/src lembrados, o `HeadingHold` e o integrador de yaw.
+O brain, ao ver o goal `parar` ou o `armed:false`, zera o goal/src lembrados e o integrador de yaw.
+Ao desarmar, o ESP32 grava o **trim aprendido do rumo** na NVS (so se mudou; log `trim do rumo salvo: X`).
+
+### Rumo em reta (no ESP32, modos auto e phone)
+Trecho reto = `v > 0` e `|s| < hold_s_eps` (FRENTE, VARREDURA, `drive` reto do celular; o brain manda `s = 0`).
+`s_corr = -(hold_kp*r + hold_ki*psi_trecho) + trim`, limitado a `+-hold_s_max`, em **unidades de roda**
+(`s_corr > 0` = mais forca na roda esquerda). O trim vale desde o 1o ciclo; o PI entra `hold_delay_ms` (100) depois,
+se o `yaw` estiver fresco (sem yaw: so o trim, malha aberta). A roda lenta **sobe** primeiro (ate `hold_pwm_max` de duty,
+acima do `pwm_max`); a rapida so desce se a lenta saturar. A rampa (`slew_per_s`) vale para o comando base; a correcao
+entra por cima dela. O trim integra devagar (`trim_rate`) o termo `hold_ki*psi_trecho`, **nao zera entre trechos**,
+fica em `+-trim_max`, e e gravado na NVS ao desarmar e lido no boot. `{"t":"trim","v":0}` (ou `trim 0` na serial) zera.
 
 ## Mensagens que o ESP32 emite (serial + WebSocket)
 `hello`, `state` (a cada 500 ms), `range` (cada leitura; no modo auto so com clientes WS),
@@ -60,7 +71,9 @@ O brain, ao ver o goal `parar` ou o `armed:false`, zera o goal/src lembrados, o 
 
 `state`: `mode`, `src` (`sensor`/`visao`), `armed`, `esp` (o ESP32 esta no comando), `st`/`sub` (FSM; `sub` = ESPERA, PARADA, OLHA, RE, CURVA, PRESO),
 `c` (mediana central em cm, -1 = sem eco), `cls` (`valida`/`livre`/`suspeito`), `deg` (servo), `ang` (angulo escolhido na ultima varredura ou `null`),
-`vis`/`yaw` (1 = opiniao/rumo frescos), `L`/`R` (motores), `why`, `up`, `rst`, `rest`.
+`vis`/`yaw` (1 = opiniao/rumo frescos), `L`/`R` (roda esquerda/direita, com a correcao de rumo; podem passar de 1 na roda
+lenta), `hold` (0 = fora de reta, 1 = so trim, 2 = corrigindo com yaw), `hc` (correcao aplicada), `trim` (trim aprendido),
+`why`, `up`, `rst`, `rest`.
 
 ### "Sem eco" em 3 estados
 Sempre pela **mediana** e pelo historico, nunca pelo ping bruto:

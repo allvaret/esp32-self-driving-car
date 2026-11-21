@@ -276,6 +276,51 @@ for t, m in o:
         except ValueError: badj.append(m)
 fails += not ok(not badj and max(len(m) for t, m in o) < 384, f"(k) {len(o)} linhas emitidas, todas JSON valido (maior: {max(len(m) for t, m in o)} bytes)")
 
+# ===== (l) rumo em reta no ESP32: rodas desiguais (direita com 65% de eficiencia e zona morta maior) =====
+WHEELS = ["--yaw", "--world-dps", 200, "--yaw-lag", 60, "--tau", 50, "--wheel-left", 1.0, 100, "--wheel-right", 0.65, 105]
+NOHOLD = ["--set", "hold_kp", 0, "--set", "hold_ki", 0, "--set", "trim_rate", 0]
+seg_inp, segs, t = list(base), [], 5000
+for _ in range(6):                                             # 6 trechos: 2 s reto (s = 0), 1 s parado
+    seg_inp += drives(t, t + 2000, 0.35) + drives(t + 2000, t + 3000, 0.0); segs.append(t); t += 3000
+def seg_stats(tr, s0):
+    win = [float(r["rate"]) for r in tr if s0 + 1000 <= r["t"] < s0 + 2000]
+    return sum(win) / len(win), float(at(tr, s0 + 1990)["trim"]), float(at(tr, s0 + 1500)["hc"])
+tr, o = run(seg_inp, WHEELS + NOHOLD, t_end=t)
+m0 = seg_stats(tr, segs[0])[0]
+fails += not ok(m0 > 100, f"(l) controle: sem correcao, com L = R o carro gira {m0:+.0f} graus/s (como no log de 20/11)")
+tr, o = run(seg_inp, WHEELS, t_end=t)
+st = [seg_stats(tr, s0) for s0 in segs]
+fails += not ok(all(abs(m) < 10 for m, _, _ in st), f"(l) com correcao: giro medio de 1 a 2 s de cada trecho < 10 graus/s: {[round(m, 1) for m, _, _ in st]}")
+first = [float(r["rate"]) for r in tr if segs[0] + 500 <= r["t"] < segs[0] + 1000]
+fails += not ok(abs(sum(first) / len(first)) < 25 and abs(st[0][0]) < 10,
+                f"(l) 1o trecho (trim 0): em 1 s o giro medio ja cai abaixo de 10 graus/s ({st[0][0]:+.1f}; 0,5-1 s: {sum(first)/len(first):+.1f})")
+trims = [tm for _, tm, _ in st]
+fails += not ok(trims[0] < -0.5 and abs(trims[-1] - trims[-2]) < 0.03 and abs(trims[-2] - trims[-3]) < 0.06 and abs(st[-1][2] - trims[-1]) < 0.15,
+                f"(l) o trim aprendido persiste entre trechos e converge: {[round(x, 3) for x in trims]} (correcao final {st[-1][2]:+.2f})")
+r = at(tr, segs[-1] + 1500)
+fails += not ok(float(r["curR"]) > 1.0 and abs(float(r["curL"]) - 0.35) < 0.01,
+                f"(l) sobe a roda LENTA (direita: {r['curR']}) e mantem a rapida em v_cruise (esquerda: {r['curL']})")
+fails += not ok(r["hold"] == "2", f"(l) state.hold = 2 (malha fechada com yaw fresco): {r['hold']}")
+# NVS: grava ao desarmar; carrega no boot; sem yaw aplica so o trim (malha aberta)
+tr, o = run(seg_inp + [(t + 100, "stop")], WHEELS, t_end=t + 300)
+nvs = [l for _, l in o if "trim do rumo salvo" in l]
+fails += not ok(nvs and abs(float(nvs[-1].split(": ")[1].rstrip('"}')) - trims[-1]) < 0.05, f"(l) trim salvo na NVS ao desarmar: {nvs[-1:] }")
+OPEN = ["--world-dps", 200, "--wheel-left", 1.0, 100, "--wheel-right", 0.65, 105]
+tr, o = run(base + drives(5000, 8000, 0.35), OPEN + ["--nvs", "trim", -1.21], t_end=8000)
+w = [float(r["rate"]) for r in tr if 6000 <= r["t"] < 8000]
+fails += not ok(abs(sum(w) / len(w)) < 15 and at(tr, 7000)["hold"] == "1" and abs(float(at(tr, 7000)["trim"]) + 1.21) < 0.01,
+                f"(l) boot com trim -1,21 na NVS e SEM yaw: so o trim (hold=1), giro medio {sum(w)/len(w):+.1f} graus/s")
+tr, o = run(base + drives(5000, 8000, 0.35), OPEN, t_end=8000)
+w = [float(r["rate"]) for r in tr if 6000 <= r["t"] < 8000]
+fails += not ok(sum(w) / len(w) > 100, f"(l) controle: sem trim e sem yaw o carro gira ({sum(w)/len(w):+.0f} graus/s)")
+tr, o = run(AUTO, WHEELS, t_end=8000)
+w = [float(r["rate"]) for r in tr if 6500 <= r["t"] < 8000]
+fails += not ok(at(tr, 7000)["cst"] == "0" and abs(sum(w) / len(w)) < 10, f"(l) modo auto (fonte sensor): FRENTE tambem corrige ({sum(w)/len(w):+.1f} graus/s)")
+tr, o = run(base + drives(5000, 8000, 0.3, 0.5), WHEELS, t_end=8000)
+fails += not ok(at(tr, 7000)["hold"] == "0" and float(at(tr, 7000)["hc"]) == 0, "(l) com s fora de +-hold_s_eps (curva pedida) nao corrige")
+tr, o = run([(100, "trim 0.4"), (200, "trim")], [], t_end=500)
+fails += not ok(any("trim = 0.400" in m for _, m in o), "(l) comando de texto `trim <valor>`")
+
 # ===== Python <-> firmware =====
 from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink
 link = MemoryLink(); head = LinkRangeHead(link, settle_s=0.15)

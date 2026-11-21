@@ -5,8 +5,10 @@ Caminho 1: o ESP32 e o UNICO executor de manobras. O celular NAO tem maquina de 
     0..100 em -30,-15,0,+15,+30 graus; ok=0 = sem opiniao: calibrando/erro)
   - manda o rumo do giroscopio:          {"t":"yaw","psi":graus,"r":graus/s}  (~20 Hz; + = direita;
     psi = integrador SEM limite, so o delta importa; r = giro filtrado sem vies)
-  - em src=visao: {"t":"drive","v","s"} a cada frame (v pela visao, s pelo HeadingHold) e, com
+  - em src=visao: {"t":"drive","v","s"} a cada frame (v pela visao, s = 0: reta) e, com
     OBSTACULO, {"t":"avoid","deg":<setor mais livre>}; o ESP32 faz a manobra.
+  - o RUMO em reta e corrigido NO ESP32 (hold_*/trim aprendido, nos dois modos) com o yaw que o
+    celular manda; o brain nao corrige mais o s (evita correcao dupla).
   - think: so narra a VISAO (estado, conf, setores). As decisoes aparecem no "state" do ESP32.
 
 Uso (Kotlin): start() no onResume; step(json) por frame; on_gyro(rate) do giroscopio; stop() no onPause;
@@ -18,8 +20,9 @@ Motivacao: o visor manda {"t":"goal","g":"explorar","src":"sensor"|"visao"} (o E
   src ausente -> sensor (o mais seguro). O brain reage a mudanca de goal OU de src.
   O brain NUNCA arma o carro (quem arma e o ESP32 ao receber o goal, ou o botao BOOT);
   na reconexao do WS ele so reenvia o mode do src atual.
-  goal "parar"/"nenhuma"/None, ou ESP32 desarmado: zera goal/src lembrados, rumo e integrador.
-Parametros abaixo [DEMO]; o rumo esta em config.HeadingConfig.
+  goal "parar"/"nenhuma"/None, ou ESP32 desarmado: zera goal/src lembrados e o integrador de yaw.
+Parametros abaixo [DEMO]; filtro/vies do giroscopio em config.HeadingConfig; correcao de rumo em
+config.ControlConfig.hold_* (espelho dos Params do firmware).
 """
 import json
 import threading
@@ -27,7 +30,7 @@ import time
 
 import viz
 from config import Config
-from control.heading import HeadingHold, YawIntegrator
+from control.heading import YawIntegrator
 from tools.flight_log import FlightLog
 from tools.ws_link import WsLink
 
@@ -60,14 +63,12 @@ _last_think_t = _last_viz_t = _last_vis_t = _last_yaw_t = _last_avoid_t = 0.0
 _calib_seen = 0
 _last_vis = {"ok": False, "s": None, "state": None, "conf": None}
 _oversize = 0                    # mensagens descartadas por passarem de MAX_MSG (deve ficar em 0)
-_heading = HeadingHold(Config().heading)      # rumo em reta (so src=visao)
-_yaw = YawIntegrator(Config().heading)        # psi sem limite para o ESP32 (sempre)
+_yaw = YawIntegrator(Config().heading)        # psi sem limite para o ESP32 (sempre): curvas e rumo em reta
 _logger = None                                # log local JSONL (tools/flight_log.py)
 _log_dir = None
 
 
 def _reset_motion():
-    _heading.reset()
     _yaw.reset()
 
 
@@ -146,11 +147,10 @@ def _send(obj):
 
 def on_gyro(rate_dps):
     """Kotlin, a cada amostra do giroscopio (~50 Hz): giro em graus/s, > 0 = para a DIREITA
-    (ja projetado no eixo vertical). Alimenta o rumo e o integrador; manda {"t":"yaw"} a ~20 Hz."""
+    (ja projetado no eixo vertical). Alimenta o integrador; manda {"t":"yaw"} a ~20 Hz."""
     global _last_yaw_t
     now = _clock()
     r = float(rate_dps)
-    _heading.feed_rate(r, now)
     link = _link
     esp = (link.state if link is not None else None) or {}
     armed = bool(esp.get("armed"))
@@ -172,7 +172,6 @@ def pop_calibrate():
         if link is None or link.calib_seq == _calib_seen:
             return False
         _calib_seen = link.calib_seq
-        _heading.reset()
         _send({"t": "think", "msg": "calibrar: aprendendo a cor do chao"})
         return True
 
@@ -264,8 +263,6 @@ def step(estado, conf=None, msg=None):
         # motivacao ou fonte nova -> so manda o MODE (quem arma e o ESP32)
         key = (goal, src)
         if goal in GOALS_MOVE and (key != _last_key or link.conn_seq != _last_conn_seq):
-            if key != _last_key:
-                _heading.reset()
             _last_key, _last_conn_seq = key, link.conn_seq
             _send({"t": "mode", "m": SRC_TO_MODE[src]})
             _send({"t": "think", "msg": f"motivacao '{goal}' fonte '{src}'"})
@@ -280,7 +277,7 @@ def step(estado, conf=None, msg=None):
         v = s = 0.0
         if goal in GOALS_MOVE and src == "visao":
             v = V_FREE if st == "LIVRE" else (V_SLOW if st == "INCERTO" else 0.0)
-            s, _ = _heading.update(now, v if armed else 0.0, 0.0)
+            s = 0.0                                # reta: o ESP32 corrige o rumo (hold_*), nao o celular
             link.drive(v, s)
             lg = _logger
             if lg is not None:
@@ -332,9 +329,9 @@ def status():
         return "brain: sem conexao com o carro (rede CARRINHO? dados moveis desligados?)"
     stt = link.state or {}
     goal, src = _resolve(link)
-    h = _heading.last
-    rumo = (f" | rumo: giro={h.get('rate', 0):+.0f}°/s corr={h.get('s_corr', 0):+.2f}"
-            if h.get("on") else f" | rumo: {h.get('why', '-')}")
+    hold = {0: "fora de reta", 1: "so trim", 2: "corrigindo"}.get(stt.get("hold"), "-")
+    rumo = (f" | rumo(ESP): {hold} corr={float(stt.get('hc') or 0):+.2f} trim={float(stt.get('trim') or 0):+.2f}"
+            f" giro={_yaw.rate:+.0f}°/s")
     vs = _last_vis
     return (f"conectado | goal={goal} fonte={src} | armado={stt.get('armed')} | "
             f"frente={stt.get('c')} cm | visao={vs['state']} ok={vs['ok']} | "
