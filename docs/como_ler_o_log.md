@@ -62,7 +62,7 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 | `cls` | como o ESP leu o "sem eco": `valida` (há eco), `livre` (sem eco e nada indica obstáculo), `suspeito` (sem eco logo depois de algo perto) |
 | `ang` | ângulo escolhido na última varredura |
 | `vis`, `yaw` | 1 = está recebendo visão / giroscópio frescos |
-| `L`, `R` | comando da roda **esquerda** / **direita** depois da rampa, do trim fixo e da correção de rumo. Na reta com correção a roda lenta pode passar de 1 (até `hold_pwm_max` de duty) |
+| `L`, `R` | comando da roda **esquerda** / **direita** depois da rampa, do trim fixo e da correção de rumo. Na reta com correção a roda lenta pode passar de 1 (até `hold_pwm_max` de duty). No teste por roda: duty/255 |
 | `hold` | correção de rumo: `0` = fora de reta (parado, curva, ré), `1` = só o trim aprendido (sem yaw fresco), `2` = corrigindo com o giroscópio |
 | `hc` | correção aplicada agora (unidades de roda; > 0 = mais força na esquerda). Colada em ±2,0 = sem autoridade |
 | `trim` | trim aprendido (persiste entre trechos e na NVS). Deve mudar pouco de uma corrida para a outra |

@@ -113,6 +113,9 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `av
 | `MockDriveLink.log` crescia sem limite no S9 | o `Runner` com mocks saiu do caminho ao vivo |
 | Log 20/11 (1): com L = R o carro gira 100–200°/s | correção de rumo no ESP32 com trim aprendido (0.5). A troca de fiação da 0.4.1 (ENA = direita) estava **errada** e foi desfeita na 0.5.1 (ver abaixo) |
 | Diagnóstico 21/11 (0.5.0): `dir` gira à esquerda (−300°/s), reto puxa à direita (+175°/s) e a correção não muda nada | o giroscópio estava certo e a fiação do firmware trocada: ENA = roda **esquerda** (0.5.1). A correção subia a roda que já era a rápida |
+| Diagnóstico 21/11: `psi` ≈ 0 com 300°/s | o brain zerava o integrador a cada quadro sem goal; agora só nas transições |
+| Diagnóstico 21/11: em v = 0,35 (duty 137) a roda direita quase não anda | faixa de duty **por roda** medida pelo teste por roda (visor sugere e aplica, NVS) |
+| Modelo do carro de 21/11: ganhos 0,01/0,05 oscilam | `hold_kp`/`hold_ki` = 0,0015/0,015 e PWM dos motores em 10 bits |
 | Log 20/11 (2): correção de rumo não atuava | saiu do brain; roda no ESP32 nos dois modos, desde a arrancada, autoridade ±2,0 (até `hold_pwm_max`), trim persistente |
 | Log 20/11 (3): ciclo avoid → ESPERA de 35 s com 86 cm válidos | sensor refuta a visão (brain e ESP32); fim da ESPERA com a condição persistente ⇒ manobra completa |
 | Log 20/11 (4): curva passava do alvo (70° para 30°) | curva era espelhada (fiação) e sem desaceleração; agora desacelera perto do alvo e reporta `turn` |
@@ -121,20 +124,27 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `av
 
 ## 7. Checklist de teste de campo (na ordem)
 
-Antes de tudo: gravar o firmware 0.5.0, instalar o app (brain sem `HeadingHold`), app aberto e conectado (o yaw vem dele).
+Antes de tudo: gravar o firmware **0.5.1** e **reinstalar o app** (o brain mudou: o `psi` não zera mais no diagnóstico),
+app aberto e conectado (o yaw vem dele). No visor, **Gravar log** ligado o tempo todo.
 
-**0. Diagnóstico pelo visor (carro no chão, 1 m livre em volta).** Seção **Diagnóstico** do `http://192.168.4.1`:
+**0. Diagnóstico pelo visor (carro no chão, ~1,5 m livre em volta).** Seção **Diagnóstico** do `http://192.168.4.1`:
    1. **Armar parado (4 s)**: o estado vira `DIAG / parado` e o carro **não** anda. Chip `giro ok` aceso.
-   2. **Girar à direita 1 s**: olhe o carro e responda no visor para onde ele virou. Esperado: virou à direita, `psi` **positivo**,
-      veredito "OK". Se o veredito culpar a **curva**, a fiação/firmware ainda está trocada (não siga); se culpar o
-      **giroscópio**, inverta o sinal de `rightDps` em `YawSensor.kt`. Anote `rate_med` (giro no lugar).
-   3. **Girar à esquerda 1 s**: o espelho do anterior (`psi` negativo). `|psi|` < 10° nos dois = roda abaixo da zona morta.
-   4. **Zerar trim**, depois **Reto 2 s (sem correção)**: mede o carro cru. Anote `rate_med` e para que lado puxa
-      (log de 20/11: 100–200°/s). `L = R` aqui.
-   5. **Reto 2 s com correção** (repita 3–4 vezes, o trim aprende entre elas): `rate_med` deve cair para < 10°/s e o `trim`
-      se estabilizar. Se `hc`/`trim` ficam colados no limite (±2,0 / ±1,5), falta autoridade: suba `hold_pwm_max` (ou `pwm_max`).
-      Se a correção piora o giro, os sinais estão errados: volte ao passo 2.
-   6. **PARAR TUDO**: o log mostra `trim do rumo salvo: X`. Desligue e ligue o ESP32 e confira o mesmo `trim` no `state`.
+   2. **Zerar trim** (o trim gravado ontem foi aprendido com a fiação trocada e o `psi` quebrado).
+   3. **Roda esq. (degraus)**: só uma roda gira, com força crescente (~2,7 s), e o carro gira sobre a roda parada.
+      Responda no visor **qual roda girou**. Esperado: a ESQUERDA, e o giroscópio dizendo "DIREITA". Anote a `partida`.
+   4. **Roda dir. (degraus)**: o espelho (roda DIREITA, carro gira para a ESQUERDA). Se uma roda **não parte** nem no
+      duty 230, é mecânico (caixa/roda): pare aqui.
+   5. Depois dos dois, o visor mostra a **faixa sugerida** de cada roda: **Aplicar faixa das rodas** (grava na NVS; o log
+      mostra `rodas (NVS): esq A..B dir C..D`).
+   6. **Girar à direita 1 s** e **Girar à esquerda 1 s**: responda para onde virou; veredito esperado "OK" (`rate_med`
+      positivo no `dir`).
+   7. **Reto 2 s (sem correção)**: com a faixa aplicada, `rate_med` deve ficar bem abaixo dos +175°/s de 21/11
+      (idealmente < 30). É o carro cru com as rodas equalizadas.
+   8. **Reto 2 s com correção** (3–4 vezes): `rate_med` < 10°/s, `hc` longe de ±2 e `trim` mudando pouco. Se balançar
+      de um lado a outro (sinal do giro trocando a cada `state`), baixe `hold_kp`. Se a correção piorar, volte ao 3.
+   9. **PARAR TUDO**: log `trim do rumo salvo: X`. Desligue e ligue o ESP32: o mesmo `trim` no `state` e a reta (passo 7)
+      continua boa sem reaplicar a faixa (ela está na NVS).
+   Se algo der errado com a faixa: **Rodas: padrão** volta à faixa única 130..150.
 
 1. **Visor e estado (carro parado, rodas no ar).** Conectar no CARRINHO, abrir `http://192.168.4.1`. Observar: `state` aparece, botões **Explorar: sensor / Explorar: visão / PARAR TUDO**, link de logs fica "baixar logs gravados no celular" depois que o S9 conectar. A faixa do app mostra `conectado | goal=… fonte=…`.
 2. **PARAR TUDO e reset.** Clicar Explorar: sensor, esperar armar (4 s, LED fixo), clicar PARAR TUDO. Observar: "desarmado", `fonte` volta a SENSOR, goal "parar", motores 0. Repetir desarmando pelo BOOT. (Opcional: reiniciar o ESP32 depois de parar e ver que **não** retoma.)
