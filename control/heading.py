@@ -5,7 +5,7 @@ diferenca muda com carga, bateria e velocidade; um trim fixo nao segurou. Aqui o
 o quanto esta girando e corrige o steer em tempo real.
 
 Convencoes (iguais as do resto do projeto):
-  steer s > 0  = direita (firmware: esquerdo mais rapido).
+  steer s > 0  = direita (firmware: roda ESQUERDA mais rapida).
   rate  r > 0  = girando para a DIREITA, em graus/s (o Kotlin ja entrega assim).
   psi   (graus) = rumo acumulado desde que o trecho reto comecou; > 0 = desviou p/ direita.
 

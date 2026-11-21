@@ -10,6 +10,16 @@
 - `http://<ip-do-S9>:8080/stream` (MJPEG da visao), `/logs` (lista) e `/log/<nome>` (download dos logs JSONL gravados no celular). O link aparece no visor.
 - Android: ao conectar no CARRINHO, aceitar "rede sem internet / manter conectado".
 
+## Fiacao dos motores (L298N)
+| Pino ESP32 | L298N | Saida | Roda (tracao so nas dianteiras; traseiras livres) | No firmware |
+|---|---|---|---|---|
+| 19 / 16 / 17 | ENA / IN1 / IN2 | OUT1 / OUT2 | dianteira **DIREITA** | `curR`, `R`, `trim_right`, `MOTOR_RIGHT_INVERT` |
+| 32 / 33 / 21 | ENB / IN3 / IN4 | OUT3 / OUT4 | dianteira **ESQUERDA** | `curL`, `L`, `trim_left`, `MOTOR_LEFT_INVERT` |
+
+Curva diferencial: `L = v + s*diff_gain`, `R = v - s*diff_gain`; `s > 0` = direita (roda esquerda mais rapida).
+Ate o firmware 0.4.0 o motor A (ENA) se chamava "esquerdo": `L`, `trim_left` e o `L` do `state` eram na verdade a roda
+DIREITA e `s > 0` virava o carro para a ESQUERDA (logs anteriores a 0.4.1 tem `L`/`R` trocados).
+
 ## Papeis
 | Quem | Conecta em | Faz |
 |---|---|---|

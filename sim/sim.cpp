@@ -30,9 +30,26 @@ static std::string g_outbuf;
 static float W_bin[5] = {300, 300, 300, 300, 300};        // cm em -30,-15,0,+15,+30 (estatico, preso ao carro)
 static float W_obst_cm = 300, W_t_obst = 1e12, W_t_clear = 1e12;   // obstaculo temporario no centro
 static float W_none_t0 = 1e12, W_none_t1 = 1e12, W_far_t0 = 1e12, W_far_t1 = 1e12;
-static float W_dps = 90.0f;                                // giro real do carro com (L-R)=1,2 (v_turn 0,3 + s=1)
+static float W_dps = 90.0f;                                // giro real do carro com (uE-uD)=1,2 (v_turn 0,3 + s=1)
 static bool W_yaw = false;                                 // injeta {"t":"yaw"} a cada 50 ms
 static double W_psi = 0, W_rate = 0;
+static float W_uL = 0, W_uR = 0;                           // velocidade de cada roda FISICA (normalizada)
+
+// ---- fiacao FISICA do carro (informada pelo dono; NAO vem do firmware) ----
+// OUT1/OUT2 (ENA, IN1/IN2) = roda dianteira DIREITA; OUT3/OUT4 (ENB, IN3/IN4) = roda dianteira ESQUERDA.
+// "Para frente" em cada roda = IN_a LOW / IN_b HIGH (o sentido ja foi acertado no carro com o firmware atual).
+// Velocidade da roda a partir do PWM: u = ef * max(0, duty - zm) / (pwm_max - pwm_min).
+// Padrao ef = 1 e zona morta zm = pwm_min: u = |comando| (carro ideal). --wheel-left/right ef zm muda isso.
+static float W_effL = 1, W_effR = 1, W_dzL = NAN, W_dzR = NAN;
+static float wheelU(int en, int ina, int inb, float eff, float dz) {
+  int duty = g_pwm_pin[en];
+  int dir = (g_pin[ina] == LOW && g_pin[inb] == HIGH) ? 1 : ((g_pin[ina] == HIGH && g_pin[inb] == LOW) ? -1 : 0);
+  if (duty <= 0 || dir == 0) return 0;
+  float z = std::isnan(dz) ? P.pwm_min : dz;
+  float span = P.pwm_max - P.pwm_min > 1 ? P.pwm_max - P.pwm_min : 1;
+  float u = eff * (duty - z) / span;
+  return dir * (u > 0 ? u : 0);
+}
 
 static float simCm(float deg, uint32_t ms) {
   int b = (int)lroundf(deg / 15.0f) + 2;
@@ -99,6 +116,8 @@ int main(int argc, char** argv) {
     else if (a == "--far") { f(W_far_t0); f(W_far_t1); }
     else if (a == "--world-dps") f(W_dps);
     else if (a == "--yaw") W_yaw = true;
+    else if (a == "--wheel-left") { f(W_effL); f(W_dzL); }
+    else if (a == "--wheel-right") { f(W_effR); f(W_dzR); }
     else if (a == "--ws") g_ws_clients = atoi(argv[++i]);
     else if (a == "--input") inFile = argv[++i];
     else if (a == "--set") { std::string k = argv[++i]; float v = (float)atof(argv[++i]);
@@ -121,7 +140,9 @@ int main(int argc, char** argv) {
     g_us += 2000;
     loop();
     double dt = (double)(g_us - last_us) / 1e6; last_us = g_us;
-    W_rate = W_dps * (double)(curL - curR) / 1.2;          // + = direita (esquerdo mais rapido)
+    W_uL = wheelU(PIN_ENB, PIN_IN3, PIN_IN4, W_effL, W_dzL);   // roda ESQUERDA (OUT3/OUT4)
+    W_uR = wheelU(PIN_ENA, PIN_IN1, PIN_IN2, W_effR, W_dzR);   // roda DIREITA (OUT1/OUT2)
+    W_rate = W_dps * (double)(W_uL - W_uR) / 1.2;          // + = direita (roda esquerda mais rapida)
     W_psi += W_rate * dt;
     if (W_yaw && millis() >= next_yaw) { next_yaw = millis() + 50;
       char b[96]; snprintf(b, sizeof b, "{\"t\":\"yaw\",\"psi\":%.2f,\"r\":%.2f}", W_psi, W_rate);
@@ -129,11 +150,11 @@ int main(int argc, char** argv) {
     if (cst != pc || sub != ps || (int)armed != pa) { printf("EV %u cst=%d sub=%d subn=%s armed=%d psi=%.2f why=%s\n", millis(), cst, sub, SUBN[sub], armed, W_psi, why); pc = cst; ps = sub; pa = armed; }
     if (millis() >= next_tr) { next_tr = millis() + 100;
       printf("TR %u armed=%d mode=%d cst=%d sub=%d subn=%s curL=%.3f curR=%.3f servo=%.1f center=%.1f cls=%d delegated=%d psi=%.1f "
-             "enaPWM=%d enbPWM=%d in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d\n",
+             "enaPWM=%d enbPWM=%d in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f\n",
              millis(), armed, mode, cst, sub, SUBN[sub], curL, curR, servoDeg, centerCm, haveC ? centerClass(millis()) : -1, (int)delegated, W_psi,
              g_pwm_pin[PIN_ENA], g_pwm_pin[PIN_ENB],
              g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4], g_pwm_pin[PIN_STEER_SERVO],
-             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel); }
+             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate); }
   }
   return 0;
 }
