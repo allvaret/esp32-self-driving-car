@@ -41,9 +41,11 @@ canvas{width:100%;height:auto;display:block}
 <div class="card"><div class="lbl">Diagnostico (rodas no chao, espaco livre; so armado, hard stop vale)</div>
 <div class="row"><button data-d="armar">Armar parado (4 s)</button><button data-d="zerar_trim">Zerar trim</button></div>
 <div class="row" style="margin-top:8px"><button data-d="dir">Girar a direita 1 s</button><button data-d="esq">Girar a esquerda 1 s</button></div>
+<div class="row" style="margin-top:8px"><button data-d="roda_esq">Roda esq. (degraus)</button><button data-d="roda_dir">Roda dir. (degraus)</button></div>
 <div class="row" style="margin-top:8px"><button data-d="reto">Reto 2 s (sem correcao)</button><button data-d="reto_corr">Reto 2 s com correcao</button></div>
-<div id="dres" style="margin-top:8px;white-space:pre-wrap"></div>
+<div id="dres" style="margin-top:8px;white-space:pre-wrap;font-variant-numeric:tabular-nums"></div>
 <div class="row" id="dask" style="margin-top:8px;display:none"><button data-v="1">o carro virou a DIREITA</button><button data-v="0">o carro virou a ESQUERDA</button></div>
+<div class="row" id="dwh" style="margin-top:8px;display:none"><button data-w="1">girou a roda ESQUERDA</button><button data-w="0">girou a roda DIREITA</button></div>
 <div id="dver" style="margin-top:6px;font-weight:600"></div></div>
 
 <div class="card"><div class="lbl">Estado</div>
@@ -126,20 +128,34 @@ function handle(m){
   }else if(m.t==='log'){addLog('[esp32] '+m.msg);
   }else if(m.t==='hello'){addLog('ESP32 iniciou (reset: '+m.reset+')',m.reset==='BROWNOUT'?'var(--er)':null);}
 }
-// ---- diagnostico: o ESP32 mede (L, R, psi do giroscopio); quem olha o carro diz para onde ele virou ----
-let DG={},dLast=null;
-const NM={dir:'Girar a direita',esq:'Girar a esquerda',reto:'Reto sem correcao',reto_corr:'Reto com correcao'};
+// ---- diagnostico: o ESP32 mede (L, R, giro do giroscopio); quem olha o carro diz para onde ele virou ----
+let DG={},dLast=null,wLast=null;
+const NM={dir:'Girar a direita',esq:'Girar a esquerda',reto:'Reto sem correcao',reto_corr:'Reto com correcao',roda_esq:'Roda esquerda',roda_dir:'Roda direita'};
 function f1(x){return x==null?'-':(+x).toFixed(1);}
+// sentido medido: pelo giro mediano (confiavel); o psi so se nao houver giro
+function gsign(m){const g=m.rate_med!=null?m.rate_med:m.psi;return g==null?null:g>0;}
+function wheel(m){
+  let s=NM[m.teste]+(m.abortado?'  ABORTADO: '+m.abortado:'')+'  (so ela, para frente; a outra parada)\nduty -> giro (°/s)';
+  (m.duty||[]).forEach((d,i)=>{const r=m.rate[i];s+='\n  '+d+' -> '+(r==null?'sem yaw':f1(r));});
+  s+='\npartida (|giro| >= 15°/s): '+(m.partida==null?'NAO PARTIU ate '+(m.duty||[]).slice(-1)[0]:'duty '+m.partida);
+  const rs=(m.rate||[]).filter(r=>r!=null&&Math.abs(r)>=15),want=m.teste==='roda_esq';
+  if(rs.length){const pos=rs.filter(r=>r>0).length>rs.length/2;
+    s+='\no giroscopio diz: carro girou para a '+(pos?'DIREITA':'ESQUERDA')+' (esperado: '+(want?'DIREITA':'ESQUERDA')+', girando sobre a roda parada)';}
+  s+='\nQual roda girou?';wLast=m;$('dwh').style.display='flex';
+  return s;
+}
 function diag(m){
   if(m.erro){$('dres').textContent=(NM[m.teste]||m.teste)+': '+m.erro;return;}
   if(m.teste==='zerar_trim'){addLog('[diag] trim zerado','var(--ac)');return;}
   DG[m.teste]=m;
+  $('dver').textContent='';$('dask').style.display='none';$('dwh').style.display='none';
+  if(m.teste==='roda_esq'||m.teste==='roda_dir'){const s=wheel(m);$('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),'var(--ac)');return;}
   let s=(NM[m.teste]||m.teste)+(m.abortado?'  ABORTADO: '+m.abortado:'')+'\nL='+f1(m.L)+' R='+f1(m.R)+'  psi='+f1(m.psi)+'°  giro mediano='+f1(m.rate_med)+'°/s  trim='+f1(m.trim);
-  $('dver').textContent='';$('dask').style.display='none';
   if(m.psi==null)s+='\nSEM yaw do celular: o app esta aberto e conectado? (sem yaw nao da para conferir o giroscopio)';
   if(m.teste==='dir'||m.teste==='esq'){
-    if(m.psi!=null&&Math.abs(m.psi)<10)s+='\nGirou menos de 10°: roda presa ou abaixo da zona morta (suba pwm_min)?';
-    s+='\nO giroscopio diz: '+(m.psi==null?'?':(m.psi>0?'DIREITA':'ESQUERDA'))+'. Para onde o carro virou de verdade?';
+    if(m.rate_med!=null&&Math.abs(m.rate_med)<15)s+='\nGirou menos de 15°/s: roda presa ou abaixo da zona morta (suba pwm_min)?';
+    const g=gsign(m);
+    s+='\nO giroscopio diz: '+(g==null?'?':(g?'DIREITA':'ESQUERDA'))+'. Para onde o carro virou de verdade?';
     dLast=m;$('dask').style.display='flex';
   }else{
     const r=m.rate_med;
@@ -151,11 +167,16 @@ function diag(m){
   }
   $('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),'var(--ac)');
 }
-document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{const m=dLast;if(!m||m.psi==null){$('dask').style.display='none';return;}
-  const want=m.teste==='dir',real=b.dataset.v==='1',gyro=m.psi>0,cOk=real===want,gOk=gyro===real;
+document.querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>{const m=wLast;$('dwh').style.display='none';if(!m)return;
+  const want=m.teste==='roda_esq',real=b.dataset.w==='1',ok=want===real;
+  const t=ok?'OK: o firmware acionou a roda '+(want?'ESQUERDA':'DIREITA')+' (fiacao certa).':
+    'FIACAO TROCADA: pediu a roda '+(want?'esquerda':'direita')+' e girou a '+(real?'esquerda':'direita')+'. Troque os pinos ENA<->ENB no firmware (nao os fios de cada motor).';
+  $('dver').textContent=t;$('dver').style.color=ok?'var(--ok)':'var(--er)';addLog('[diag] '+t,ok?'var(--ok)':'var(--er)');});
+document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{const m=dLast,gyro=m?gsign(m):null;if(gyro==null){$('dask').style.display='none';return;}
+  const want=m.teste==='dir',real=b.dataset.v==='1',cOk=real===want,gOk=gyro===real;
   const t=cOk&&gOk?'OK: curva e giroscopio com o sinal certo.':
     (!cOk&&gOk?'Problema na CURVA (firmware/fiacao): pediu '+(want?'direita':'esquerda')+' e virou '+(real?'direita':'esquerda')+'. O giroscopio esta certo.':
-    (cOk&&!gOk?'Problema no GIROSCOPIO: virou '+(real?'a direita':'a esquerda')+' e o psi deu '+(gyro?'positivo':'negativo')+'. Inverter o sinal em YawSensor.kt (rightDps).':
+    (cOk&&!gOk?'Problema no GIROSCOPIO: virou '+(real?'a direita':'a esquerda')+' e o giro deu '+(gyro?'positivo':'negativo')+'. Inverter o sinal em YawSensor.kt (rightDps).':
     'CURVA e GIROSCOPIO invertidos: corrigir os dois (fiacao/firmware e YawSensor.kt).'));
   $('dver').textContent=t;$('dver').style.color=cOk&&gOk?'var(--ok)':'var(--er)';$('dask').style.display='none';addLog('[diag] '+t,cOk&&gOk?'var(--ok)':'var(--er)');});
 document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{$('dres').textContent=(NM[b.dataset.d]||b.dataset.d)+': pedido...';send({t:'diag',teste:b.dataset.d});});

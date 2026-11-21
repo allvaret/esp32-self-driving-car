@@ -94,7 +94,7 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 
 | Campo | Significado |
 |---|---|
-| `teste` | `dir` / `esq` (gira no lugar 1 s, `v = 0`, `s = ±1`), `reto` (2 s, sem correção nem trim), `reto_corr` (2 s, com correção), `zerar_trim` |
+| `teste` | `dir` / `esq` (gira no lugar 1 s, `v = 0`, `s = ±1`), `reto` (2 s, sem correção nem trim), `reto_corr` (2 s, com correção), `roda_esq` / `roda_dir` (ver abaixo), `zerar_trim` |
 | `L`, `R` | comando médio de cada roda na 2ª metade do teste |
 | `psi` | graus girados no teste (+ = direita); `null` = sem yaw do celular |
 | `rate_med` | giro mediano na 2ª metade (graus/s). No `reto` sem correção, é o quanto o carro puxa; no `dir`, ≈ giro no lugar |
@@ -102,6 +102,17 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 | `trim` | trim aprendido no momento do teste |
 | `abortado` | motivo, se parou antes (hard stop, desarmado, parar) |
 | `erro` | o teste foi recusado (ex.: "arme antes") |
+
+`roda_esq` / `roda_dir` (uma roda só, para frente, duty bruto em degraus; o carro gira sobre a roda parada):
+
+| Campo | Significado |
+|---|---|
+| `duty` | os degraus de PWM (0–255) aplicados à roda, ~300 ms cada |
+| `rate` | giro mediano em cada degrau (°/s). Mede a velocidade da roda: `roda_esq` deve dar > 0 (direita), `roda_dir` < 0 |
+| `partida` | primeiro duty em que a roda empurrou o carro (\|giro\| ≥ 15°/s); `null` = não partiu. Bom valor para `pwm_min_l/r` |
+
+Com o `psi`/`rate_med`: até 21/11 o `psi` do diagnóstico vinha quase 0 (o brain zerava o integrador a cada quadro sem goal);
+use o `rate_med` nesses logs.
 
 **`log`** (`msg`): "ARMADO", "ESP32 assumiu…", "celular retomou…", **"avoid recusado: visao refutada pelo sensor (X cm)"**
 (o ESP recusou um `avoid` porque o sensor lê o caminho livre), **"trim do rumo salvo: X"** (ao desarmar).

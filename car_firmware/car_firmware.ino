@@ -210,8 +210,16 @@ static float holdTrim = 0, holdTrimSaved = 0;  // trim aprendido (unidades de ro
 static Preferences prefs;
 
 // diagnostico pelo visor ({"t":"diag","teste":..}): so armado; o FSM fica parado durante e DEPOIS do teste
-enum { D_NONE = 0, D_DIR, D_ESQ, D_RETO, D_RETO_CORR };
-static const char* DIAG_N[] = {"", "dir", "esq", "reto", "reto_corr"};
+enum { D_NONE = 0, D_DIR, D_ESQ, D_RETO, D_RETO_CORR, D_RODA_E, D_RODA_D };
+static const char* DIAG_N[] = {"", "dir", "esq", "reto", "reto_corr", "roda_esq", "roda_dir"};
+// teste POR RODA: so uma roda, para frente, com DUTY BRUTO em degraus (d0, d0+dd, ... ate d1; step_ms cada); a outra
+// parada. O carro gira sobre a roda parada: o giro de cada degrau mede a velocidade daquela roda naquele duty.
+#define WSTEP_MAX 16
+static float wD0 = 110, wD1 = 230, wDD = 15, wStepMs = 300;
+static int wDuty = 0;                        // > 0: driveApply escreve SO a roda do teste com este duty
+static int wStep = -1, wN = 0, wBufN = 0;
+static float wRates[WSTEP_MAX], wBuf[16];
+static int wDuties[WSTEP_MAX];
 static int diagTest = D_NONE;
 static bool diagHold = false;              // armado mas parado (fim de um teste ou "armar" do diagnostico)
 static uint32_t diagT0 = 0, diagDur = 0, diagYawT = 0;
@@ -597,8 +605,40 @@ static void saveTrim() {                                 // so ao desarmar (pouc
   emitf("{\"t\":\"log\",\"msg\":\"trim do rumo salvo: %.3f\"}", holdTrim);
 }
 
+static void motorRaw(int in1, int in2, int pin, int ch, int dir, int duty, Kick& k) {   // duty bruto (teste por roda)
+#if MOTORS_ENABLED
+  k.dir = duty > 0 ? dir : 0;
+  digitalWrite(in1, dir > 0 ? HIGH : LOW);
+  digitalWrite(in2, dir > 0 ? LOW : HIGH);
+  pwmWrite(pin, ch, (uint32_t)(duty < 0 ? 0 : (duty > 255 ? 255 : duty)));
+#else
+  (void)in1; (void)in2; (void)pin; (void)ch; (void)dir; (void)duty; (void)k;
+#endif
+}
+
 static void driveApply(uint32_t now, float v, float s) {
   if (!armed) { v = 0; s = 0; }
+#if STEER_MODE == STEER_DIFFERENTIAL
+  if (armed && wDuty > 0 && (diagTest == D_RODA_E || diagTest == D_RODA_D)) {
+    // teste por roda: SO a roda pedida, para frente, com duty bruto (sem rampa, trim nem correcao); a outra parada.
+    // Reflexos: nao parte com o servo girando e nao avanca sem leitura livre. state L/R = duty/255.
+    bool left = diagTest == D_RODA_E;
+    bool block = ((now - tAim) < (uint32_t)P.settle_ms) || !forwardAllowed(now);
+    int d = block ? 0 : wDuty;
+    rampL = rampR = 0;
+    curL = left ? d / 255.0f : 0; curR = left ? 0 : d / 255.0f;
+    holdStep(now, 0, 0);                                   // fora de reta
+    tLastApply = now;
+    if (left) {
+      motorRaw(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -1 : 1, d, kickL);
+      motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, 0, kickR, now, 0);
+    } else {
+      motorRaw(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -1 : 1, d, kickR);
+      motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, 0, kickL, now, 0);
+    }
+    return;
+  }
+#endif
   bool servoMoving = (now - tAim) < (uint32_t)P.settle_ms;
   if (servoMoving && absf(curL) < 0.02f && absf(curR) < 0.02f) { v = 0; s = 0; }  // nao parte com servo girando
   if (v > 0 && !forwardAllowed(now)) v = 0;              // reflexo: sem leitura livre, nao avanca
@@ -952,9 +992,17 @@ static void phoneStep(uint32_t now, float* v, float* s) {
 // forwardAllowed, servo parado). Ao fim emite {"t":"diag","teste","L","R","psi","rate_med",...} com o yaw recebido
 // (psi = graus girados no teste, + = direita; rate_med = mediana do giro na 2a metade) e o carro fica PARADO
 // (diagHold) ate um novo goal "explorar" ou o desarme. Quem olha o carro confere o sentido (visor).
+static bool diagIsWheel(int t) { return t == D_RODA_E || t == D_RODA_D; }
+
 static void diagStart(int test, uint32_t now) {
   diagTest = test; diagHold = true; diagT0 = now;
   diagDur = (test == D_DIR || test == D_ESQ) ? 1000 : 2000;
+  if (diagIsWheel(test)) {
+    int n = wDD > 0 ? (int)((wD1 - wD0) / wDD) + 1 : 1;
+    n = n < 1 ? 1 : (n > WSTEP_MAX ? WSTEP_MAX : n);
+    diagDur = (uint32_t)(n * wStepMs);
+    wStep = -1; wN = 0; wBufN = 0; wDuty = 0;
+  }
   diagHavePsi = false; diagN = 0; diagNLR = 0; diagSumL = diagSumR = 0; diagYawT = yawT;
   holdNoCorr = (test == D_RETO);                         // "reto" mede o carro cru: sem PI e sem trim
   delegated = false; avoidReq = false;
@@ -964,9 +1012,46 @@ static void diagStart(int test, uint32_t now) {
 
 static int cmpf(const void* a, const void* b) { float x = *(const float*)a, y = *(const float*)b; return x < y ? -1 : (x > y); }
 
+static float medianOf(float* a, int n) {
+  qsort(a, n, sizeof(float), cmpf);
+  return a[n / 2];
+}
+
+static void wheelCloseStep() {                           // fecha o degrau atual: mediana do giro (NAN = sem yaw)
+  if (wStep < 0 || wN >= WSTEP_MAX) return;
+  wDuties[wN] = wDuty;
+  wRates[wN++] = wBufN > 0 ? medianOf(wBuf, wBufN) : NAN;
+  wBufN = 0;
+}
+
+// {"t":"diag","teste":"roda_esq","duty":[110,125,..],"rate":[0.0,3.1,..],"partida":140,"psi":..,"ms":..}
+// partida = 1o duty com |giro| >= 15 graus/s (a roda comecou a empurrar o carro); null = nao partiu
+static void wheelFinish(uint32_t now, const char* abort, const char* psi) {
+  char du[WSTEP_MAX * 5 + 4], ra[WSTEP_MAX * 8 + 4], pa[12];
+  int pu = 0, pr = 0, start = -1;
+  du[0] = ra[0] = 0;
+  for (int i = 0; i < wN; i++) {
+    pu += snprintf(du + pu, sizeof(du) - pu, "%s%d", i ? "," : "", wDuties[i]);
+    if (isnan(wRates[i])) pr += snprintf(ra + pr, sizeof(ra) - pr, "%snull", i ? "," : "");
+    else pr += snprintf(ra + pr, sizeof(ra) - pr, "%s%.1f", i ? "," : "", wRates[i]);
+    if (start < 0 && !isnan(wRates[i]) && absf(wRates[i]) >= 15.0f) start = wDuties[i];
+  }
+  if (start >= 0) snprintf(pa, sizeof(pa), "%d", start); else strcpy(pa, "null");
+  emitf("{\"t\":\"diag\",\"teste\":\"%s\",\"duty\":[%s],\"rate\":[%s],\"partida\":%s,\"psi\":%s,\"ms\":%lu%s%s%s}",
+        DIAG_N[diagTest], du, ra, pa, psi, (unsigned long)(now - diagT0),
+        abort ? ",\"abortado\":\"" : "", abort ? abort : "", abort ? "\"" : "");
+}
+
 static void diagFinish(uint32_t now, const char* abort) {
   char psi[16], med[16];
   if (diagHavePsi) snprintf(psi, sizeof(psi), "%.1f", diagPsi1 - diagPsi0); else strcpy(psi, "null");
+  if (diagIsWheel(diagTest)) {
+    wheelCloseStep();
+    wheelFinish(now, abort, psi);
+    wDuty = 0; wStep = -1; diagTest = D_NONE; holdNoCorr = false;
+    if (abort) snprintf(why, sizeof(why), "diag abortado: %s", abort); else setWhy("diagnostico: parado");
+    return;
+  }
   if (diagN > 0) { qsort(diagRates, diagN, sizeof(float), cmpf); snprintf(med, sizeof(med), "%.1f", diagRates[diagN / 2]); }
   else strcpy(med, "null");
   float mL = diagNLR ? diagSumL / diagNLR : 0, mR = diagNLR ? diagSumR / diagNLR : 0;
@@ -985,6 +1070,18 @@ static void diagStep(uint32_t now, float* v, float* s) {
   bool fresh = yawFresh(now);
   if (fresh && !diagHavePsi) { diagHavePsi = true; diagPsi0 = yawPsi; }
   if (fresh) diagPsi1 = yawPsi;
+  if (diagIsWheel(diagTest)) {
+    if (el >= diagDur) { diagFinish(now, NULL); return; }   // fecha o ultimo degrau
+    int i = (int)(el / (uint32_t)wStepMs);
+    if (i != wStep) { wheelCloseStep(); wStep = i; }
+    if (yawT != diagYawT) {                              // amostra nova: conta so nos ultimos 60% do degrau (giro assentado)
+      diagYawT = yawT;
+      if (fresh && el - (uint32_t)i * (uint32_t)wStepMs >= (uint32_t)(0.4f * wStepMs) && wBufN < 16) wBuf[wBufN++] = yawR;
+    }
+    wDuty = (int)clampf(wD0 + i * wDD, 0.0f, 255.0f);
+    if (el > 300 && !forwardAllowed(now)) diagFinish(now, "hard stop / sem leitura livre");
+    return;                                              // v = s = 0: o driveApply escreve so a roda do teste
+  }
   if (yawT != diagYawT) {                                // amostra nova de yaw: guarda o giro (2a metade do teste)
     diagYawT = yawT;
     if (el >= diagDur / 2 && diagN < DIAG_MAX) diagRates[diagN++] = yawR;
@@ -999,7 +1096,7 @@ static void diagStep(uint32_t now, float* v, float* s) {
 // ============================ ARMAR / BOTAO / LED ===========================
 static void setMode(int m, uint32_t now) {                 // idempotente: o mesmo modo nao reinicia a FSM
   if (m == mode && !diagHold) return;
-  diagTest = D_NONE; diagHold = false; holdNoCorr = false;   // goal explorar depois do diagnostico: volta a andar
+  diagTest = D_NONE; diagHold = false; holdNoCorr = false; wDuty = 0;   // goal explorar depois do diagnostico: volta a andar
   mode = m;
   cmdV = cmdS = 0; delegated = false; resetAuto(now); rtcMode = (uint32_t)mode;
 }
@@ -1098,7 +1195,7 @@ static void handleJson(const char* line, uint32_t now) {
     if (jsonBool(line, "on", &on)) setArmed(on, now);
   } else if (strcmp(t, "ping") == 0) {
     emitf("{\"t\":\"pong\"}");
-  } else if (strcmp(t, "diag") == 0) {         // diagnostico do visor: armar | dir | esq | reto | reto_corr | parar | zerar_trim
+  } else if (strcmp(t, "diag") == 0) {  // diagnostico do visor: armar | dir | esq | reto | reto_corr | roda_esq | roda_dir | parar | zerar_trim
     char d[16];
     if (!jsonStr(line, "teste", d, sizeof(d))) return;
     if (strcmp(d, "armar") == 0) {                       // arma (4 s) e fica PARADO esperando os testes
@@ -1113,9 +1210,16 @@ static void handleJson(const char* line, uint32_t now) {
     }
     if (strcmp(d, "parar") == 0) { if (diagTest != D_NONE) diagFinish(now, "parar"); diagHold = armed || armPending; return; }
     int k = D_NONE;
-    for (int i = 1; i <= D_RETO_CORR; i++) if (strcmp(d, DIAG_N[i]) == 0) k = i;
+    for (int i = 1; i <= D_RODA_D; i++) if (strcmp(d, DIAG_N[i]) == 0) k = i;
     if (k == D_NONE) return;
     if (!armed) { emitf("{\"t\":\"diag\",\"teste\":\"%s\",\"erro\":\"arme antes (Armar parado)\"}", d); return; }
+    if (diagIsWheel(k)) {                                // degraus opcionais: {"d0":110,"d1":230,"dd":15,"step_ms":300}
+      if (jsonNum(line, "d0", &x)) wD0 = clampf(x, 0, 255);
+      if (jsonNum(line, "d1", &x)) wD1 = clampf(x, 0, 255);
+      if (jsonNum(line, "dd", &x)) wDD = clampf(x, 1, 255);
+      if (jsonNum(line, "step_ms", &x)) wStepMs = clampf(x, 150, 2000);
+      if (wD1 < wD0) wD1 = wD0;
+    }
     rtcArmed = 0;                                        // reset no meio do diagnostico nao retoma a exploracao
     diagStart(k, now);
   } else if (strcmp(t, "trim") == 0) {         // {"t":"trim","v":0}: define (e grava) o trim aprendido do rumo

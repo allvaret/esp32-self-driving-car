@@ -357,6 +357,32 @@ tr, o = run([(300, goal_line("explorar", "sensor")), (6000, dline("dir"))], ["--
 fails += not ok(float(at(tr, 5500)["curL"]) > 0.3 and diags(o) and diags(o)[0]["psi"] > 30 and abs(float(at(tr, 8000)["curL"])) < 0.02,
                 "(m) teste pedido explorando: interrompe a FSM, gira e fica parado")
 fails += not ok(all(json.loads(m) for t, m in o if m.startswith("{")), "(m) linhas emitidas sao JSON valido")
+# teste POR RODA: duty bruto em degraus, uma roda so; roda direita com zona morta maior (como no carro de 21/11)
+WTEST = ["--yaw", "--world-dps", 40, "--wheel-left", 1.0, 120, "--wheel-right", 1.0, 141]
+tr, o = run(ARMD + [(5000, dline("roda_esq")), (9000, dline("roda_dir"))], WTEST, t_end=13000)
+dd = {d["teste"]: d for d in diags(o)}
+e, d_ = dd.get("roda_esq", {}), dd.get("roda_dir", {})
+fails += not ok(e.get("duty") == list(range(110, 231, 15)) and 2650 <= e.get("ms", 0) <= 2800,
+                f"(m) Roda esq.: 9 degraus de duty 110..230 em ~2,7 s: {e.get('duty')} ({e.get('ms')} ms)")
+rs = [r for r in e.get("rate", []) if r is not None]
+fails += not ok(len(rs) == 9 and all(r >= -0.5 for r in rs) and rs[-1] > 100 and e.get("partida") in (125, 140),
+                f"(m) Roda esq.: carro gira para a DIREITA (sobre a roda parada), crescendo com o duty; partida {e.get('partida')}: {e.get('rate')}")
+rs = [r for r in d_.get("rate", []) if r is not None]
+fails += not ok(len(rs) == 9 and all(r <= 0.5 for r in rs) and rs[-1] < -100 and d_.get("partida") == 155,
+                f"(m) Roda dir.: gira para a ESQUERDA; zona morta maior => partida {d_.get('partida')} (esperado 155): {d_.get('rate')}")
+w_e = [r for r in tr if 5400 <= r["t"] <= 7600]
+w_d = [r for r in tr if 9400 <= r["t"] <= 11600]
+fails += not ok(all(int(r["enbPWM"]) == 0 and int(r["enaPWM"]) >= 110 and r["in1"] == "0" and r["in2"] == "1" for r in w_e)
+                and all(int(r["enaPWM"]) == 0 and int(r["enbPWM"]) >= 110 and r["in3"] == "0" and r["in4"] == "1" for r in w_d),
+                "(m) Roda esq. aciona SO o ENA (para frente), Roda dir. SO o ENB; o sentido de cada roda e o de sempre")
+fails += not ok(all(abs(float(r["curL"])) < 0.02 and int(r["enaPWM"]) == 0 and int(r["enbPWM"]) == 0 for r in tr if 7900 <= r["t"] <= 8900 or r["t"] >= 12000),
+                "(m) depois do teste por roda o carro fica parado (duty 0)")
+tr, o = run(ARMD + [(5000, '{"t":"diag","teste":"roda_dir","d0":130,"d1":160,"dd":10,"step_ms":200}')], WTEST, t_end=7000)
+d_ = (diags(o) or [{}])[0]
+fails += not ok(d_.get("duty") == [130, 140, 150, 160] and 750 <= d_.get("ms", 0) <= 900, f"(m) degraus configuraveis (d0/d1/dd/step_ms): {d_.get('duty')} {d_.get('ms')} ms")
+tr, o = run(ARMD + [(5000, dline("roda_esq"))], WTEST + ["--obst", 6000, 15], t_end=8000)
+d_ = (diags(o) or [{}])[0]
+fails += not ok("abortado" in d_ and all(int(r["enaPWM"]) == 0 for r in tr if r["t"] > 6300), f"(m) hard stop vale no teste por roda: {d_.get('abortado')}")
 tr, o = run(ARMD + [(5000, '{"t":"trim","v":0.7}'), (5200, dline("zerar_trim"))], [], t_end=6000)
 fails += not ok(any('"zerar_trim"' in m for _, m in o) and float(at(tr, 5800)["trim"]) == 0, "(m) Zerar trim")
 
