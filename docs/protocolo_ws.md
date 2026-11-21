@@ -1,4 +1,4 @@
-# Protocolo celular <-> ESP32 (firmware 0.4)
+# Protocolo celular <-> ESP32 (firmware 0.5)
 
 **Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
 *opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
@@ -81,7 +81,8 @@ fica em `+-trim_max`, e e gravado na NVS ao desarmar e lido no boot. `{"t":"trim
 
 ## Mensagens que o ESP32 emite (serial + WebSocket)
 `hello`, `state` (a cada 500 ms), `range` (cada leitura; no modo auto so com clientes WS),
-`log`, `cfg_ok`, `pong`, `scan` e os `goal`/`think` repassados. Ao conectar, cada cliente recebe o `goal` atual (com `src`) e o diario do servo.
+`log`, `cfg_ok`, `pong`, `scan`, `turn` (fim de cada curva), `diag` (fim de cada teste) e os `goal`/`think` repassados.
+Campos de `turn` e `diag`: `docs/como_ler_o_log.md`. Ao conectar, cada cliente recebe o `goal` atual (com `src`) e o diario do servo.
 
 `state`: `mode`, `src` (`sensor`/`visao`), `armed`, `esp` (o ESP32 esta no comando), `st`/`sub` (FSM; `sub` = ESPERA, PARADA, OLHA, RE, CURVA, PRESO),
 `c` (mediana central em cm, -1 = sem eco), `cls` (`valida`/`livre`/`suspeito`), `deg` (servo), `ang` (angulo escolhido na ultima varredura ou `null`),
