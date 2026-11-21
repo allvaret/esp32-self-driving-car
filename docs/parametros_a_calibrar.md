@@ -165,3 +165,20 @@ O `psi` que o celular manda (`{"t":"yaw"}`) vem do `YawIntegrator` (sem limite),
 
 Conferir no app antes de rodar: a faixa de status mostra `psi=...` e `rumo: giro=...`. Girar o carro
 à mão para a DIREITA tem que dar giro positivo; se der negativo, inverta o sinal em `YawSensor.kt`.
+
+## Duty dos motores por roda (`control.pwm_*` = `Params` do firmware 0.5.1)
+
+O comando 0..1 de cada roda vira duty `pwm_min_x + comando·(pwm_max_x − pwm_min_x)`. Com `-1`, a roda usa a faixa única
+`pwm_min`/`pwm_max` (130/150). No diagnóstico de 21/11, em v = 0,35 (duty 137) a roda direita quase não andava e o carro
+girava a +175°/s: a faixa única de 20 pontos fica em cima da zona morta de uma das rodas.
+
+| Parâmetro | Padrão | Status | Como calibrar |
+|---|---|---|---|
+| `pwm_min` / `pwm_max` | 130 / 150 | DEMO | Faixa única (vale para a roda sem faixa própria). |
+| `pwm_min_l` / `pwm_max_l` | -1 | MEDIR | Roda **esquerda** (ENA). Botões **Roda esq.** e **Roda dir.** do visor e depois **Aplicar faixa das rodas**. |
+| `pwm_min_r` / `pwm_max_r` | -1 | MEDIR | Roda **direita** (ENB). Idem. O `cfg` com qualquer um dos quatro grava os quatro na NVS (log `rodas (NVS): ...`); **Rodas: padrão** volta a -1. |
+
+Como o visor calcula: em cada teste por roda, reta `giro = k·(duty − d0)` nos degraus em que a roda andou (|giro| ≥ 15°/s).
+A roda que parte mais tarde fica com `pwm_min = d0 + 5` e `pwm_max = pwm_min + 25`; a outra recebe o duty que dá a
+**mesma velocidade** nesses dois pontos. Assim o mesmo comando anda igual nas duas rodas e a correção de rumo só cobre
+o resto (carga, bateria). Se `hc` ainda ficar colado em ±2, a faixa está errada ou falta `hold_pwm_max`.

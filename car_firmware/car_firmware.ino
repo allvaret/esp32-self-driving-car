@@ -109,6 +109,9 @@ struct Params {
   // diff_gain: curva diferencial, L = v + s*diff_gain (roda esquerda), R = v - s*diff_gain (direita); s > 0 = direita.
   float trim_left = 1.0f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
   float pwm_min = 130, pwm_max = 150, slew_per_s = 2.0f;   // [DEMO] valores atuais do carro
+  // faixa de duty POR RODA (comando 0..1 -> pwm_min_x..pwm_max_x); -1 = usa pwm_min/pwm_max. Medir com o teste por
+  // roda (o visor sugere e aplica: mesma velocidade nas duas rodas para o mesmo comando). Gravados na NVS pelo cfg.
+  float pwm_min_l = -1, pwm_max_l = -1, pwm_min_r = -1, pwm_max_r = -1;
   float kick_pwm = 200, kick_ms = 0;                         // arrancada desligada
   // reflexo / phone
   float wd_ms = 500, fresh_ms = 400, max_rev_ms = 1500;
@@ -142,6 +145,7 @@ static const KV PARAM_TABLE[] = {
   {"trim_left", &P.trim_left}, {"trim_right", &P.trim_right}, {"steer_trim_deg", &P.steer_trim_deg},
   {"steer_max_deg", &P.steer_max_deg}, {"diff_gain", &P.diff_gain},
   {"pwm_min", &P.pwm_min}, {"pwm_max", &P.pwm_max}, {"slew_per_s", &P.slew_per_s},
+  {"pwm_min_l", &P.pwm_min_l}, {"pwm_max_l", &P.pwm_max_l}, {"pwm_min_r", &P.pwm_min_r}, {"pwm_max_r", &P.pwm_max_r},
   {"kick_pwm", &P.kick_pwm}, {"kick_ms", &P.kick_ms},
   {"wd_ms", &P.wd_ms}, {"fresh_ms", &P.fresh_ms}, {"max_rev_ms", &P.max_rev_ms},
   {"vis_fresh_ms", &P.vis_fresh_ms}, {"yaw_fresh_ms", &P.yaw_fresh_ms}, {"vis_free_min", &P.vis_free_min},
@@ -531,7 +535,11 @@ static bool forwardAllowed(uint32_t now) {
 }
 
 // ================================ MOTORES ===================================
-static void motorWrite(int in1, int in2, int pin, int ch, float v, Kick& k, uint32_t now, uint32_t delayMs) {
+// faixa de duty de cada roda (w: 0 = esquerda, 1 = direita): pwm_min_l/r e pwm_max_l/r; -1 = pwm_min/pwm_max
+static float wheelLo(int w) { float x = w ? P.pwm_min_r : P.pwm_min_l; return clampf(x >= 0 ? x : P.pwm_min, 0.0f, 255.0f); }
+static float wheelHi(int w) { float x = w ? P.pwm_max_r : P.pwm_max_l; return clampf(x >= 0 ? x : P.pwm_max, wheelLo(w), 255.0f); }
+
+static void motorWrite(int w, int in1, int in2, int pin, int ch, float v, Kick& k, uint32_t now, uint32_t delayMs) {
 #if MOTORS_ENABLED
   float a = absf(v);
   if (a < 0.02f) {
@@ -547,8 +555,8 @@ static void motorWrite(int in1, int in2, int pin, int ch, float v, Kick& k, uint
   if (dir != k.dir) { k.dir = dir; k.until = now + delayMs + (uint32_t)P.kick_ms; }  // saiu do zero/inverteu
   digitalWrite(in1, dir > 0 ? HIGH : LOW);
   digitalWrite(in2, dir > 0 ? LOW : HIGH);
-  float hi = clampf(P.pwm_max, P.pwm_min, 255.0f);
-  float duty = P.pwm_min + a * (hi - P.pwm_min);
+  float lo = wheelLo(w), hi = wheelHi(w);
+  float duty = lo + a * (hi - lo);
   int32_t left = (int32_t)(k.until - now);
   if (left > 0) {
     if (left > (int32_t)P.kick_ms) duty = 0;               // escalonamento: espera a vez de partir
@@ -616,6 +624,14 @@ static void motorRaw(int in1, int in2, int pin, int ch, int dir, int duty, Kick&
 #endif
 }
 
+static void saveWheels() {                               // faixa de duty por roda -> NVS (so quando o cfg muda)
+  prefs.begin("carro", false);
+  prefs.putFloat("pmin_l", P.pwm_min_l); prefs.putFloat("pmax_l", P.pwm_max_l);
+  prefs.putFloat("pmin_r", P.pwm_min_r); prefs.putFloat("pmax_r", P.pwm_max_r);
+  prefs.end();
+  emitf("{\"t\":\"log\",\"msg\":\"rodas (NVS): esq %.0f..%.0f dir %.0f..%.0f\"}", wheelLo(0), wheelHi(0), wheelLo(1), wheelHi(1));
+}
+
 static void driveApply(uint32_t now, float v, float s) {
   if (!armed) { v = 0; s = 0; }
 #if STEER_MODE == STEER_DIFFERENTIAL
@@ -631,10 +647,10 @@ static void driveApply(uint32_t now, float v, float s) {
     tLastApply = now;
     if (left) {
       motorRaw(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -1 : 1, d, kickL);
-      motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, 0, kickR, now, 0);
+      motorWrite(1, PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, 0, kickR, now, 0);
     } else {
       motorRaw(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -1 : 1, d, kickR);
-      motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, 0, kickL, now, 0);
+      motorWrite(0, PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, 0, kickL, now, 0);
     }
     return;
   }
@@ -678,8 +694,9 @@ static void driveApply(uint32_t now, float v, float s) {
   // fraca nao; se a correcao subisse na rampa (2/s) o carro giraria em toda partida.
   float hc = holdStep(now, v, s);                        // 0 fora de trecho reto
   if (hc != 0) {                                         // sobe a roda LENTA; a rapida so desce se a lenta saturar
-    float span = P.pwm_max - P.pwm_min;
-    float lim = span > 1 ? clampf((P.hold_pwm_max - P.pwm_min) / span, 1.0f, 10.0f) : 1.0f;   // teto: hold_pwm_max
+    int ws = hc > 0 ? 0 : 1;                             // roda lenta: a faixa de duty DELA define o teto
+    float span = wheelHi(ws) - wheelLo(ws);
+    float lim = span > 1 ? clampf((P.hold_pwm_max - wheelLo(ws)) / span, 1.0f, 10.0f) : 1.0f;   // teto: hold_pwm_max
     float* slow = hc > 0 ? &curL : &curR;
     float* fast = hc > 0 ? &curR : &curL;
     *slow += absf(hc);
@@ -690,12 +707,12 @@ static void driveApply(uint32_t now, float v, float s) {
   // escalonamento: parte primeiro a roda com MAIS comando (a lenta, quando a correcao atua); a outra espera
   // KICK_STAGGER_MS. Sem correcao (L = R) a ESQUERDA (ENA) parte primeiro.
   if (absf(curL) >= absf(curR)) {
-    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now, 0);
-    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now,
+    motorWrite(0, PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now, 0);
+    motorWrite(1, PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now,
                kickL.dir != 0 ? KICK_STAGGER_MS : 0);
   } else {
-    motorWrite(PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now, 0);
-    motorWrite(PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now,
+    motorWrite(1, PIN_IN3, PIN_IN4, PIN_ENB, CH_ENB, MOTOR_RIGHT_INVERT ? -curR : curR, kickR, now, 0);
+    motorWrite(0, PIN_IN1, PIN_IN2, PIN_ENA, CH_ENA, MOTOR_LEFT_INVERT ? -curL : curL, kickL, now,
                kickR.dir != 0 ? KICK_STAGGER_MS : 0);
   }
 }
@@ -1185,6 +1202,8 @@ static void handleJson(const char* line, uint32_t now) {
   } else if (strcmp(t, "cfg") == 0) {
     for (int i = 0; i < N_PARAMS; i++)
       if (jsonNum(line, PARAM_TABLE[i].key, &x)) *PARAM_TABLE[i].ptr = x;
+    if (jsonFind(line, "pwm_min_l") || jsonFind(line, "pwm_max_l") || jsonFind(line, "pwm_min_r") || jsonFind(line, "pwm_max_r"))
+      saveWheels();                                        // faixa por roda: persiste (medida uma vez no teste por roda)
     servoInit = false; aimTo(servoDeg, now);              // reaplica trim do servo
     emitf("{\"t\":\"cfg_ok\"}");
   } else if (strcmp(t, "mode") == 0) {
@@ -1319,6 +1338,8 @@ void setup() {
 #endif
   prefs.begin("carro", true);                              // trim aprendido do rumo (0 na 1a vez)
   holdTrim = holdTrimSaved = clampf(prefs.getFloat("trim", 0.0f), -P.trim_max, P.trim_max);
+  P.pwm_min_l = prefs.getFloat("pmin_l", P.pwm_min_l); P.pwm_max_l = prefs.getFloat("pmax_l", P.pwm_max_l);   // faixa por roda
+  P.pwm_min_r = prefs.getFloat("pmin_r", P.pwm_min_r); P.pwm_max_r = prefs.getFloat("pmax_r", P.pwm_max_r);
   prefs.end();
   uint32_t now = millis();
   aimTo(0, now);

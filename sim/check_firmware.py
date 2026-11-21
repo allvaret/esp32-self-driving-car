@@ -383,6 +383,44 @@ fails += not ok(d_.get("duty") == [130, 140, 150, 160] and 750 <= d_.get("ms", 0
 tr, o = run(ARMD + [(5000, dline("roda_esq"))], WTEST + ["--obst", 6000, 15], t_end=8000)
 d_ = (diags(o) or [{}])[0]
 fails += not ok("abortado" in d_ and all(int(r["enaPWM"]) == 0 for r in tr if r["t"] > 6300), f"(m) hard stop vale no teste por roda: {d_.get('abortado')}")
+
+# faixa de duty POR RODA (pwm_min_l/r, pwm_max_l/r): mesma conta do visor (web_ui.h: fitW/suggest)
+def fit_w(m):
+    p = [(d, abs(r)) for d, r in zip(m["duty"], m["rate"]) if r is not None and abs(r) >= 15]
+    n = len(p); sx = sum(x for x, _ in p); sy = sum(y for _, y in p)
+    sxx = sum(x * x for x, _ in p); sxy = sum(x * y for x, y in p)
+    k = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+    return k, (sx - sy / k) / n
+def suggest(a, b, wm=5, wspan=25):
+    (kl, dl), (kr, dr) = fit_w(a), fit_w(b)
+    kref, _ = (kl, dl) if dl >= dr else (kr, dr)
+    vlo, vhi = kref * wm, kref * (wm + wspan)
+    return {"pwm_min_l": round(dl + vlo / kl), "pwm_max_l": round(dl + vhi / kl),
+            "pwm_min_r": round(dr + vlo / kr), "pwm_max_r": round(dr + vhi / kr)}
+UNEQ2 = ["--yaw", "--world-dps", 40, "--wheel-left", 1.0, 120, "--wheel-right", 0.7, 141]
+tr, o = run(ARMD + [(5000, dline("roda_esq")), (9000, dline("roda_dir"))], UNEQ2, t_end=13000)
+dd = {d["teste"]: d for d in diags(o)}
+sug = suggest(dd["roda_esq"], dd["roda_dir"])
+fails += not ok(sug["pwm_min_r"] > sug["pwm_min_l"] and (sug["pwm_max_r"] - sug["pwm_min_r"]) > (sug["pwm_max_l"] - sug["pwm_min_l"]),
+                f"(p) teste por roda -> faixa sugerida: a direita (parte mais tarde e rende 70%) ganha duty maior: {sug}")
+cfg = json.dumps(dict(t="cfg", **sug), separators=(",", ":"))
+NOCORR = ["--set", "hold_kp", 0, "--set", "hold_ki", 0, "--set", "trim_rate", 0]
+tr, o = run(base + drives(5000, 8000, 0.35), UNEQ2 + NOCORR, t_end=8000)
+w0 = [float(r["rate"]) for r in tr if 6000 <= r["t"] < 8000]
+tr, o = run(base + [(4500, cfg)] + drives(5000, 8000, 0.35), UNEQ2 + NOCORR, t_end=8000)
+w1 = [float(r["rate"]) for r in tr if 6000 <= r["t"] < 8000]
+m0, m1 = sum(w0) / len(w0), sum(w1) / len(w1)
+fails += not ok(abs(m0) > 20 and abs(m1) < 5 and len(cfg) <= 160,
+                f"(p) reta SEM correcao: {m0:+.1f} graus/s com a faixa unica -> {m1:+.1f} graus/s com a faixa por roda (cfg {len(cfg)} bytes)")
+nv = [l for _, l in o if l.startswith('{"t":"log"') and "rodas (NVS)" in l]
+fails += not ok(nv, f"(p) cfg com a faixa por roda grava na NVS: {nv[:1]}")
+tr, o = run(base + drives(5000, 8000, 0.35), UNEQ2 + NOCORR + ["--nvs", "pmin_l", sug["pwm_min_l"], "--nvs", "pmax_l", sug["pwm_max_l"],
+            "--nvs", "pmin_r", sug["pwm_min_r"], "--nvs", "pmax_r", sug["pwm_max_r"]], t_end=8000)
+w2 = [float(r["rate"]) for r in tr if 6000 <= r["t"] < 8000]
+fails += not ok(abs(sum(w2) / len(w2)) < 5, f"(p) boot le a faixa por roda da NVS: {sum(w2)/len(w2):+.1f} graus/s sem correcao")
+tr, o = run(base + drives(5000, 7000, 0.35), [], t_end=7000)
+r = at(tr, 6500)
+fails += not ok(int(r["enaPWM"]) == int(r["enbPWM"]) == 137, f"(p) sem faixa por roda (-1) vale pwm_min/pwm_max: duty {r['enaPWM']}/{r['enbPWM']} (130 + 0,35*20)")
 tr, o = run(ARMD + [(5000, '{"t":"trim","v":0.7}'), (5200, dline("zerar_trim"))], [], t_end=6000)
 fails += not ok(any('"zerar_trim"' in m for _, m in o) and float(at(tr, 5800)["trim"]) == 0, "(m) Zerar trim")
 

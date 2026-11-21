@@ -44,7 +44,7 @@ Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garant
 | `{"t":"aim","deg":45}` | so no modo phone (bancada) |
 | `{"t":"mode","m":"auto"\|"phone"}` | troca o modo (idempotente: o mesmo modo nao reinicia nada) |
 | `{"t":"arm","on":true\|false}` | arma (4 s) / desarma (`false` = reset completo) |
-| `{"t":"cfg","v_cruise":0.35}` | muda parametros |
+| `{"t":"cfg","v_cruise":0.35}` | muda parametros (na RAM). Excecao: `pwm_min_l`/`pwm_max_l`/`pwm_min_r`/`pwm_max_r` (faixa de duty por roda, -1 = `pwm_min`/`pwm_max`) sao gravados na NVS e lidos no boot |
 | `{"t":"think","msg":"...","state":"LIVRE","conf":0.8}` | so repassa a todos (o brain narra so a VISAO) |
 | `{"t":"calibrar"}` | so repassa; o cerebro reaprende a cor do chao (a opiniao fica `ok:0` enquanto isso). O visor manda ao clicar em "Explorar: visao" |
 | `{"t":"ping"}` | responde `pong` |

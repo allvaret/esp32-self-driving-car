@@ -46,7 +46,9 @@ canvas{width:100%;height:auto;display:block}
 <div id="dres" style="margin-top:8px;white-space:pre-wrap;font-variant-numeric:tabular-nums"></div>
 <div class="row" id="dask" style="margin-top:8px;display:none"><button data-v="1">o carro virou a DIREITA</button><button data-v="0">o carro virou a ESQUERDA</button></div>
 <div class="row" id="dwh" style="margin-top:8px;display:none"><button data-w="1">girou a roda ESQUERDA</button><button data-w="0">girou a roda DIREITA</button></div>
-<div id="dver" style="margin-top:6px;font-weight:600"></div></div>
+<div id="dver" style="margin-top:6px;font-weight:600"></div>
+<div id="dsug" style="margin-top:8px;white-space:pre-wrap"></div>
+<div class="row" style="margin-top:8px"><button id="wapl" disabled>Aplicar faixa das rodas</button><button id="wdef">Rodas: padrao</button></div></div>
 
 <div class="card"><div class="lbl">Estado</div>
 <div class="big" id="st">-</div>
@@ -144,12 +146,32 @@ function wheel(m){
   s+='\nQual roda girou?';wLast=m;$('dwh').style.display='flex';
   return s;
 }
+// faixa de duty por roda a partir dos testes por roda: reta giro = k*(duty - d0) nos degraus que andaram.
+// Mesma velocidade nas duas rodas para o mesmo comando: lo/hi de cada roda dao as velocidades vLo/vHi da roda que
+// parte mais tarde com lo = d0 + WM e hi = lo + WSPAN (perto do que o carro usa hoje: 130..150).
+const WM=5,WSPAN=25;let WSUG=null;
+function fitW(m){const p=[];(m.duty||[]).forEach((d,i)=>{const r=m.rate[i];if(r!=null&&Math.abs(r)>=15)p.push([d,Math.abs(r)]);});
+  if(p.length<2)return null;let n=p.length,sx=0,sy=0,sxx=0,sxy=0;p.forEach(([x,y])=>{sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;});
+  const k=(n*sxy-sx*sy)/(n*sxx-sx*sx);if(!(k>0))return null;return {k:k,d0:(sx-sy/k)/n};}
+function suggest(){const a=DG.roda_esq,b=DG.roda_dir;if(!a||!b)return;
+  const L=fitW(a),R=fitW(b);WSUG=null;$('wapl').disabled=true;
+  if(!L||!R){$('dsug').textContent='Faixa das rodas: precisa de pelo menos 2 degraus com giro em CADA roda'+
+    (!L?' (esquerda nao andou)':'')+(!R?' (direita nao andou)':'')+'. Roda que nao parte nem com duty alto = problema mecanico.';return;}
+  const ref=L.d0>=R.d0?L:R,vLo=ref.k*WM,vHi=ref.k*(WM+WSPAN),c=x=>Math.max(0,Math.min(255,Math.round(x)));
+  const s={pwm_min_l:c(L.d0+vLo/L.k),pwm_max_l:c(L.d0+vHi/L.k),pwm_min_r:c(R.d0+vLo/R.k),pwm_max_r:c(R.d0+vHi/R.k)};
+  let t='Faixa sugerida (mesma velocidade nas duas rodas):\n  esquerda '+s.pwm_min_l+'..'+s.pwm_max_l+'  (parte em ~'+L.d0.toFixed(0)+', '+L.k.toFixed(1)+' °/s por ponto)'+
+    '\n  direita  '+s.pwm_min_r+'..'+s.pwm_max_r+'  (parte em ~'+R.d0.toFixed(0)+', '+R.k.toFixed(1)+' °/s por ponto)';
+  if(Math.max(s.pwm_max_l,s.pwm_max_r)>180)t+='\n  atencao: faixa alta; confira hold_pwm_max (200) para sobrar correcao';
+  if(Math.abs(L.k-R.k)/Math.max(L.k,R.k)>0.4)t+='\n  as rodas rendem muito diferente (>40%): caixa/roda com atrito?';
+  WSUG=s;$('wapl').disabled=false;$('dsug').textContent=t;}
+$('wapl').onclick=()=>{if(!WSUG)return;send(Object.assign({t:'cfg'},WSUG));addLog('[diag] faixa das rodas enviada: '+JSON.stringify(WSUG),'var(--ac)');};
+$('wdef').onclick=()=>{send({t:'cfg',pwm_min_l:-1,pwm_max_l:-1,pwm_min_r:-1,pwm_max_r:-1});addLog('[diag] rodas: faixa padrao (pwm_min/pwm_max)','var(--ac)');};
 function diag(m){
   if(m.erro){$('dres').textContent=(NM[m.teste]||m.teste)+': '+m.erro;return;}
   if(m.teste==='zerar_trim'){addLog('[diag] trim zerado','var(--ac)');return;}
   DG[m.teste]=m;
   $('dver').textContent='';$('dask').style.display='none';$('dwh').style.display='none';
-  if(m.teste==='roda_esq'||m.teste==='roda_dir'){const s=wheel(m);$('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),'var(--ac)');return;}
+  if(m.teste==='roda_esq'||m.teste==='roda_dir'){const s=wheel(m);$('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),'var(--ac)');suggest();return;}
   let s=(NM[m.teste]||m.teste)+(m.abortado?'  ABORTADO: '+m.abortado:'')+'\nL='+f1(m.L)+' R='+f1(m.R)+'  psi='+f1(m.psi)+'°  giro mediano='+f1(m.rate_med)+'°/s  trim='+f1(m.trim);
   if(m.psi==null)s+='\nSEM yaw do celular: o app esta aberto e conectado? (sem yaw nao da para conferir o giroscopio)';
   if(m.teste==='dir'||m.teste==='esq'){

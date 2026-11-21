@@ -63,6 +63,15 @@ class ControlConfig:
     hold_pwm_max: float = 200.0   # teto de duty (0..255) da roda lenta corrigida (pode passar do pwm_max)
     trim_rate: float = 0.5        # por s: velocidade com que o trim absorve o termo hold_ki*psi
     trim_max: float = 1.5         # limite do trim aprendido (salvo em NVS ao desarmar)
+    # --- duty dos motores (firmware: comando 0..1 -> pwm_min..pwm_max, 0..255) ---
+    pwm_min: float = 130.0        # [DEMO] faixa unica (vale para a roda cuja faixa propria e -1)
+    pwm_max: float = 150.0
+    # faixa POR RODA (esquerda = ENA, direita = ENB); -1 = usa pwm_min/pwm_max. Medida pelo teste por roda do visor
+    # (que sugere e aplica por cfg); o firmware grava na NVS
+    pwm_min_l: float = -1.0
+    pwm_max_l: float = -1.0
+    pwm_min_r: float = -1.0
+    pwm_max_r: float = -1.0
     # --- bordas (hipoteses, nao validadas) ---
     edge_near_h: float = 0.20     # h_cen <= isso (borda perto) ...
     edge_cov_min: float = 0.50    # ... com cobertura >= isso -> edge_near
