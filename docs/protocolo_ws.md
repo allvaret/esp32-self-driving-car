@@ -48,6 +48,20 @@ Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garant
 | `{"t":"calibrar"}` | so repassa; o cerebro reaprende a cor do chao (a opiniao fica `ok:0` enquanto isso). O visor manda ao clicar em "Explorar: visao" |
 | `{"t":"ping"}` | responde `pong` |
 | `{"t":"trim","v":0}` | define e grava na NVS o trim aprendido do rumo (unidades de roda) |
+| `{"t":"diag","teste":"armar"\|"dir"\|"esq"\|"reto"\|"reto_corr"\|"parar"\|"zerar_trim"}` | diagnostico (secao **Diagnostico** do visor), ver abaixo |
+
+### Diagnostico (visor, sem PC)
+- `armar`: arma (4 s) e fica **parado** (`state.st = "DIAG"`, `sub = "parado"`), sem rodar a FSM.
+- `dir` / `esq`: `v = 0`, `s = +1` / `-1` por 1 s (gira no lugar). `reto`: `v = v_cruise`, `s = 0` por 2 s **sem** correcao de
+  rumo (nem PI nem trim: mede o carro cru). `reto_corr`: igual, com a correcao. `zerar_trim`: trim aprendido = 0 (NVS).
+- So com o carro armado (senao responde `{"t":"diag","teste":..,"erro":..}`). Valem o hard stop e o `forwardAllowed`
+  (um teste reto sem leitura livre e abortado). Durante e depois do teste a FSM fica suspensa e o carro parado, ate um
+  novo goal `explorar` ou o desarme; um reset no meio do diagnostico **nao** retoma a exploracao.
+- Ao fim: `{"t":"diag","teste":"dir","L":0.60,"R":-0.60,"psi":74.8,"rate_med":90.0,"n":10,"ms":1000,"trim":0.00}`:
+  `L`/`R` = media dos comandos na 2a metade, `psi` = graus girados no teste pelo yaw recebido (+ = direita; `null` sem yaw),
+  `rate_med` = mediana do giro na 2a metade, `n` = amostras de yaw, `abortado` (se houve).
+- O visor pergunta para onde o carro virou de verdade e cruza com o sinal do `psi`: curva errada e giroscopio certo =
+  fiacao/firmware; curva certa e `psi` com sinal trocado = `YawSensor.kt`; os dois trocados = corrigir os dois.
 
 ### Reset completo
 `goal parar`, `arm false` e o BOOT desarmando levam tudo ao estado inicial: `armed`/`delegated` falsos, modo padrao

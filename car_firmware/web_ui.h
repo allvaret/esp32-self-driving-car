@@ -38,6 +38,14 @@ canvas{width:100%;height:auto;display:block}
 <button id="dl">Baixar log (0)</button>
 </div></div>
 
+<div class="card"><div class="lbl">Diagnostico (rodas no chao, espaco livre; so armado, hard stop vale)</div>
+<div class="row"><button data-d="armar">Armar parado (4 s)</button><button data-d="zerar_trim">Zerar trim</button></div>
+<div class="row" style="margin-top:8px"><button data-d="dir">Girar a direita 1 s</button><button data-d="esq">Girar a esquerda 1 s</button></div>
+<div class="row" style="margin-top:8px"><button data-d="reto">Reto 2 s (sem correcao)</button><button data-d="reto_corr">Reto 2 s com correcao</button></div>
+<div id="dres" style="margin-top:8px;white-space:pre-wrap"></div>
+<div class="row" id="dask" style="margin-top:8px;display:none"><button data-v="1">o carro virou a DIREITA</button><button data-v="0">o carro virou a ESQUERDA</button></div>
+<div id="dver" style="margin-top:6px;font-weight:600"></div></div>
+
 <div class="card"><div class="lbl">Estado</div>
 <div class="big" id="st">-</div>
 <div id="why" style="color:var(--mu);min-height:1.2em"></div>
@@ -112,9 +120,43 @@ function handle(m){
   }else if(m.t==='goal'){
     document.querySelectorAll('[data-g]').forEach(b=>b.classList.toggle('on',b.dataset.g===m.g&&b.dataset.src===(m.src||'sensor')));
     addLog('motivacao: '+m.g+(m.g==='explorar'?' ('+(m.src||'sensor')+')':''),'var(--ac)');
+  }else if(m.t==='diag'){diag(m);
   }else if(m.t==='log'){addLog('[esp32] '+m.msg);
   }else if(m.t==='hello'){addLog('ESP32 iniciou (reset: '+m.reset+')',m.reset==='BROWNOUT'?'var(--er)':null);}
 }
+// ---- diagnostico: o ESP32 mede (L, R, psi do giroscopio); quem olha o carro diz para onde ele virou ----
+let DG={},dLast=null;
+const NM={dir:'Girar a direita',esq:'Girar a esquerda',reto:'Reto sem correcao',reto_corr:'Reto com correcao'};
+function f1(x){return x==null?'-':(+x).toFixed(1);}
+function diag(m){
+  if(m.erro){$('dres').textContent=(NM[m.teste]||m.teste)+': '+m.erro;return;}
+  if(m.teste==='zerar_trim'){addLog('[diag] trim zerado','var(--ac)');return;}
+  DG[m.teste]=m;
+  let s=(NM[m.teste]||m.teste)+(m.abortado?'  ABORTADO: '+m.abortado:'')+'\nL='+f1(m.L)+' R='+f1(m.R)+'  psi='+f1(m.psi)+'°  giro mediano='+f1(m.rate_med)+'°/s  trim='+f1(m.trim);
+  $('dver').textContent='';$('dask').style.display='none';
+  if(m.psi==null)s+='\nSEM yaw do celular: o app esta aberto e conectado? (sem yaw nao da para conferir o giroscopio)';
+  if(m.teste==='dir'||m.teste==='esq'){
+    if(m.psi!=null&&Math.abs(m.psi)<10)s+='\nGirou menos de 10°: roda presa ou abaixo da zona morta (suba pwm_min)?';
+    s+='\nO giroscopio diz: '+(m.psi==null?'?':(m.psi>0?'DIREITA':'ESQUERDA'))+'. Para onde o carro virou de verdade?';
+    dLast=m;$('dask').style.display='flex';
+  }else{
+    const r=m.rate_med;
+    if(r!=null)s+='\n'+(Math.abs(r)<10?'anda reto (|giro| < 10°/s)':'puxa para a '+(r>0?'DIREITA (roda esquerda mais forte)':'ESQUERDA (roda direita mais forte)')+
+      ' - vale se o giroscopio passou no teste de giro');
+    const a=DG.reto,b=DG.reto_corr;
+    if(a&&b&&a.rate_med!=null&&b.rate_med!=null)s+='\nsem correcao '+f1(a.rate_med)+'°/s -> com correcao '+f1(b.rate_med)+'°/s'+
+      (Math.abs(b.rate_med)>=Math.abs(a.rate_med)?'  (a correcao NAO ajudou: confira os sinais)':'');
+  }
+  $('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),'var(--ac)');
+}
+document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{const m=dLast;if(!m||m.psi==null){$('dask').style.display='none';return;}
+  const want=m.teste==='dir',real=b.dataset.v==='1',gyro=m.psi>0,cOk=real===want,gOk=gyro===real;
+  const t=cOk&&gOk?'OK: curva e giroscopio com o sinal certo.':
+    (!cOk&&gOk?'Problema na CURVA (firmware/fiacao): pediu '+(want?'direita':'esquerda')+' e virou '+(real?'direita':'esquerda')+'. O giroscopio esta certo.':
+    (cOk&&!gOk?'Problema no GIROSCOPIO: virou '+(real?'a direita':'a esquerda')+' e o psi deu '+(gyro?'positivo':'negativo')+'. Inverter o sinal em YawSensor.kt (rightDps).':
+    'CURVA e GIROSCOPIO invertidos: corrigir os dois (fiacao/firmware e YawSensor.kt).'));
+  $('dver').textContent=t;$('dver').style.color=cOk&&gOk?'var(--ok)':'var(--er)';$('dask').style.display='none';addLog('[diag] '+t,cOk&&gOk?'var(--ok)':'var(--er)');});
+document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{$('dres').textContent=(NM[b.dataset.d]||b.dataset.d)+': pedido...';send({t:'diag',teste:b.dataset.d});});
 function draw(){
   const c=$('rad'),g=c.getContext('2d'),W=c.width,H=c.height,cx=W/2,cy=H-10,R=H-20,MAX=200,now=Date.now();
   g.clearRect(0,0,W,H);g.strokeStyle='#2d333b';g.fillStyle='#8b98a5';g.font='11px sans-serif';

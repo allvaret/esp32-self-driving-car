@@ -202,6 +202,18 @@ static float holdPsi0 = 0, holdCorr = 0;
 static float holdTrim = 0, holdTrimSaved = 0;  // trim aprendido (unidades de roda) e o ultimo gravado em NVS
 static Preferences prefs;
 
+// diagnostico pelo visor ({"t":"diag","teste":..}): so armado; o FSM fica parado durante e DEPOIS do teste
+enum { D_NONE = 0, D_DIR, D_ESQ, D_RETO, D_RETO_CORR };
+static const char* DIAG_N[] = {"", "dir", "esq", "reto", "reto_corr"};
+static int diagTest = D_NONE;
+static bool diagHold = false;              // armado mas parado (fim de um teste ou "armar" do diagnostico)
+static uint32_t diagT0 = 0, diagDur = 0, diagYawT = 0;
+static float diagPsi0 = 0, diagPsi1 = 0, diagSumL = 0, diagSumR = 0;
+static bool diagHavePsi = false;
+static int diagNLR = 0, diagN = 0;
+#define DIAG_MAX 64
+static float diagRates[DIAG_MAX];
+
 // maquina de estados
 enum { C_FRENTE = 0, C_VARREDURA = 1, C_DESVIO = 2 };
 enum { S_NONE = 0, S_ESPERA, S_PARADA, S_OLHA, S_RE, S_CURVA, S_PRESO };
@@ -870,9 +882,59 @@ static void phoneStep(uint32_t now, float* v, float* s) {
   *v = cmdV; *s = cmdS;
 }
 
+// ============================== DIAGNOSTICO =================================
+// Testes curtos pedidos pelo visor, com o carro armado. Valem os mesmos reflexos do driveApply (hard stop,
+// forwardAllowed, servo parado). Ao fim emite {"t":"diag","teste","L","R","psi","rate_med",...} com o yaw recebido
+// (psi = graus girados no teste, + = direita; rate_med = mediana do giro na 2a metade) e o carro fica PARADO
+// (diagHold) ate um novo goal "explorar" ou o desarme. Quem olha o carro confere o sentido (visor).
+static void diagStart(int test, uint32_t now) {
+  diagTest = test; diagHold = true; diagT0 = now;
+  diagDur = (test == D_DIR || test == D_ESQ) ? 1000 : 2000;
+  diagHavePsi = false; diagN = 0; diagNLR = 0; diagSumL = diagSumR = 0; diagYawT = yawT;
+  holdNoCorr = (test == D_RETO);                         // "reto" mede o carro cru: sem PI e sem trim
+  delegated = false; avoidReq = false;
+  cst = C_FRENTE; sub = S_NONE; aimTo(0, now);
+  snprintf(why, sizeof(why), "diagnostico: %s", DIAG_N[test]);
+}
+
+static int cmpf(const void* a, const void* b) { float x = *(const float*)a, y = *(const float*)b; return x < y ? -1 : (x > y); }
+
+static void diagFinish(uint32_t now, const char* abort) {
+  char psi[16], med[16];
+  if (diagHavePsi) snprintf(psi, sizeof(psi), "%.1f", diagPsi1 - diagPsi0); else strcpy(psi, "null");
+  if (diagN > 0) { qsort(diagRates, diagN, sizeof(float), cmpf); snprintf(med, sizeof(med), "%.1f", diagRates[diagN / 2]); }
+  else strcpy(med, "null");
+  float mL = diagNLR ? diagSumL / diagNLR : 0, mR = diagNLR ? diagSumR / diagNLR : 0;
+  emitf("{\"t\":\"diag\",\"teste\":\"%s\",\"L\":%.2f,\"R\":%.2f,\"psi\":%s,\"rate_med\":%s,\"n\":%d,\"ms\":%lu,"
+        "\"trim\":%.2f%s%s%s}",
+        DIAG_N[diagTest], mL, mR, psi, med, diagN, (unsigned long)(now - diagT0), holdTrim,
+        abort ? ",\"abortado\":\"" : "", abort ? abort : "", abort ? "\"" : "");
+  diagTest = D_NONE; holdNoCorr = false;
+  if (abort) snprintf(why, sizeof(why), "diag abortado: %s", abort); else setWhy("diagnostico: parado");
+}
+
+static void diagStep(uint32_t now, float* v, float* s) {
+  *v = 0; *s = 0;
+  if (diagTest == D_NONE) return;                        // diagHold: parado
+  uint32_t el = now - diagT0;
+  bool fresh = yawFresh(now);
+  if (fresh && !diagHavePsi) { diagHavePsi = true; diagPsi0 = yawPsi; }
+  if (fresh) diagPsi1 = yawPsi;
+  if (yawT != diagYawT) {                                // amostra nova de yaw: guarda o giro (2a metade do teste)
+    diagYawT = yawT;
+    if (el >= diagDur / 2 && diagN < DIAG_MAX) diagRates[diagN++] = yawR;
+  }
+  if (el >= diagDur / 2) { diagSumL += curL; diagSumR += curR; diagNLR++; }
+  if (el >= diagDur) { diagFinish(now, NULL); return; }
+  if (diagTest == D_DIR || diagTest == D_ESQ) { *v = 0; *s = diagTest == D_DIR ? 1.0f : -1.0f; return; }
+  *v = P.v_cruise; *s = 0;
+  if (el > 300 && !forwardAllowed(now)) diagFinish(now, "hard stop / sem leitura livre");
+}
+
 // ============================ ARMAR / BOTAO / LED ===========================
 static void setMode(int m, uint32_t now) {                 // idempotente: o mesmo modo nao reinicia a FSM
-  if (m == mode) return;
+  if (m == mode && !diagHold) return;
+  diagTest = D_NONE; diagHold = false; holdNoCorr = false;   // goal explorar depois do diagnostico: volta a andar
   mode = m;
   cmdV = cmdS = 0; delegated = false; resetAuto(now); rtcMode = (uint32_t)mode;
 }
@@ -883,6 +945,8 @@ static void setArmed(bool on, uint32_t now) {
   else {
     armPending = false; armed = false; delegated = false; avoidReq = false; avoidHintOk = false;
     curL = curR = rampL = rampR = 0; cmdV = cmdS = 0;
+    if (diagTest != D_NONE) diagFinish(now, "desarmado");
+    diagHold = false;
     holdOn = false; holdMode = H_OFF; holdCorr = 0;
     saveTrim();                                            // trim aprendido do rumo -> NVS
     mode = DEFAULT_MODE; resetAuto(now);
@@ -903,7 +967,7 @@ static void buttonTask(uint32_t now) {
     if (r == LOW) setArmed(!(armed || armPending), now);
   }
   if (armPending && (int32_t)(now - armAt) >= 0) {
-    armPending = false; armed = true; resetAuto(now); delegated = false; rtcArmed = 1; rtcMode = (uint32_t)mode;
+    armPending = false; armed = true; resetAuto(now); delegated = false; rtcArmed = diagHold ? 0 : 1; rtcMode = (uint32_t)mode;
     lastDriveT = now;
     emitf("{\"t\":\"log\",\"msg\":\"ARMADO\"}");
   }
@@ -929,7 +993,7 @@ static void printHeartbeat(uint32_t now) {
         "\"L\":%.2f,\"R\":%.2f,\"hold\":%d,\"hc\":%.2f,\"trim\":%.2f,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
         mode == MODE_AUTO ? "auto" : "phone", mode == MODE_AUTO ? "sensor" : "visao",
         armed ? "true" : "false", delegated ? "true" : "false",
-        fsm ? CN[cst] : "-", fsm ? SN[sub] : "",
+        diagHold ? "DIAG" : (fsm ? CN[cst] : "-"), diagHold ? (diagTest ? DIAG_N[diagTest] : "parado") : (fsm ? SN[sub] : ""),
         centerCm, servoDeg, haveC ? KN[centerClass(now)] : "-", ang, visUsable(now) ? 1 : 0, yawFresh(now) ? 1 : 0,
         curL, curR, holdMode, holdCorr, holdTrim, why, (unsigned long)(now / 1000),
         (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?", (unsigned long)rtcRestores);
@@ -969,6 +1033,26 @@ static void handleJson(const char* line, uint32_t now) {
     if (jsonBool(line, "on", &on)) setArmed(on, now);
   } else if (strcmp(t, "ping") == 0) {
     emitf("{\"t\":\"pong\"}");
+  } else if (strcmp(t, "diag") == 0) {         // diagnostico do visor: armar | dir | esq | reto | reto_corr | parar | zerar_trim
+    char d[16];
+    if (!jsonStr(line, "teste", d, sizeof(d))) return;
+    if (strcmp(d, "armar") == 0) {                       // arma (4 s) e fica PARADO esperando os testes
+      diagHold = true; diagTest = D_NONE; rtcArmed = 0;
+      if (!armed && !armPending) setArmed(true, now);
+      return;
+    }
+    if (strcmp(d, "zerar_trim") == 0) {
+      holdTrim = 0; saveTrim();
+      emitf("{\"t\":\"diag\",\"teste\":\"zerar_trim\",\"trim\":0.00}");
+      return;
+    }
+    if (strcmp(d, "parar") == 0) { if (diagTest != D_NONE) diagFinish(now, "parar"); diagHold = armed || armPending; return; }
+    int k = D_NONE;
+    for (int i = 1; i <= D_RETO_CORR; i++) if (strcmp(d, DIAG_N[i]) == 0) k = i;
+    if (k == D_NONE) return;
+    if (!armed) { emitf("{\"t\":\"diag\",\"teste\":\"%s\",\"erro\":\"arme antes (Armar parado)\"}", d); return; }
+    rtcArmed = 0;                                        // reset no meio do diagnostico nao retoma a exploracao
+    diagStart(k, now);
   } else if (strcmp(t, "trim") == 0) {         // {"t":"trim","v":0}: define (e grava) o trim aprendido do rumo
     if (jsonNum(line, "v", &x)) {
       holdTrim = clampf(x, -P.trim_max, P.trim_max); saveTrim();
@@ -1107,7 +1191,8 @@ void loop() {
   sensorTask(now);
   float v = 0, s = 0;
   if (armed) {
-    if (mode == MODE_AUTO) autoStep(now, &v, &s);
+    if (diagHold) diagStep(now, &v, &s);                 // diagnostico (ou parado depois dele): FSM suspensa
+    else if (mode == MODE_AUTO) autoStep(now, &v, &s);
     else phoneStep(now, &v, &s);
   }
   driveApply(now, v, s);

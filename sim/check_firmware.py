@@ -321,6 +321,44 @@ fails += not ok(at(tr, 7000)["hold"] == "0" and float(at(tr, 7000)["hc"]) == 0, 
 tr, o = run([(100, "trim 0.4"), (200, "trim")], [], t_end=500)
 fails += not ok(any("trim = 0.400" in m for _, m in o), "(l) comando de texto `trim <valor>`")
 
+# ===== (m) diagnostico pelo visor =====
+def diags(o): return [json.loads(m) for t, m in o if m.startswith('{"t":"diag"')]
+def dline(k): return json.dumps({"t": "diag", "teste": k}, separators=(",", ":"))
+tr, o = run([(1000, dline("dir"))], ["--yaw"], t_end=2000)
+fails += not ok(diags(o) and "erro" in diags(o)[0] and all(float(r["curL"]) == 0 for r in tr), f"(m) desarmado: recusa o teste ({diags(o)[:1]})")
+ARMD = [(300, dline("armar"))]                                  # arma aos 4,3 s e fica parado (modo auto, caminho livre)
+tr, o = run(ARMD, ["--yaw"], t_end=7000)
+sts = [json.loads(m) for t, m in o if m.startswith('{"t":"state"')]
+fails += not ok(at(tr, 4400)["armed"] == "1" and all(float(r["curL"]) == 0 for r in tr) and sts[-1]["st"] == "DIAG" and sts[-1]["sub"] == "parado",
+                f"(m) 'Armar parado': arma e NAO anda (o modo auto andaria): st={sts[-1]['st']}/{sts[-1]['sub']}")
+tr, o = run(ARMD + [(5000, dline("dir")), (7000, dline("esq"))], ["--yaw"], t_end=9000)
+dd = diags(o)
+d1, d2 = (dd + [{}, {}])[:2]
+fails += not ok(d1.get("teste") == "dir" and d1["psi"] > 30 and d1["rate_med"] > 30 and d1["L"] > 0.5 and d1["R"] < -0.5 and 950 <= d1["ms"] <= 1100,
+                f"(m) Girar a direita 1 s (s=+1, v=0): psi {d1.get('psi')} graus, giro mediano {d1.get('rate_med')}, L {d1.get('L')} R {d1.get('R')}")
+fails += not ok(d2.get("teste") == "esq" and d2["psi"] < -30 and d2["L"] < -0.5 and d2["R"] > 0.5, f"(m) Girar a esquerda: psi {d2.get('psi')}")
+fails += not ok(all(abs(float(r["curL"])) < 0.02 for r in tr if 6100 <= r["t"] <= 6900 or r["t"] >= 8200), "(m) depois de cada teste o carro fica parado")
+UNEQ = WHEELS + ["--nvs", "trim", -1.22]
+tr, o = run(ARMD + [(5000, dline("reto")), (8000, dline("reto_corr"))], UNEQ, t_end=11000)
+dd = {d["teste"]: d for d in diags(o)}
+a, b = dd.get("reto", {}), dd.get("reto_corr", {})
+fails += not ok(a.get("rate_med", 0) > 100 and abs(a["L"] - a["R"]) < 0.01 and b.get("rate_med") is not None and abs(b["rate_med"]) < 10,
+                f"(m) Reto 2 s SEM correcao (nem trim): giro {a.get('rate_med')} graus/s, L {a.get('L')} R {a.get('R')}; "
+                f"COM correcao: {b.get('rate_med')} graus/s (L {b.get('L')} R {b.get('R')})")
+tr, o = run(ARMD + [(5000, dline("dir"))], [], t_end=7000)
+fails += not ok(diags(o) and diags(o)[0]["psi"] is None and diags(o)[0]["rate_med"] is None, "(m) sem yaw do celular: psi/rate_med = null")
+tr, o = run(ARMD + [(5000, dline("reto"))], ["--yaw", "--obst", 5500, 15], t_end=8000)
+fails += not ok(diags(o) and "abortado" in diags(o)[0] and all(float(r["curL"]) < 0.02 for r in tr if r["t"] > 6200),
+                f"(m) hard stop vale no diagnostico (obstaculo a 15 cm): {diags(o)[:1]}")
+tr, o = run(ARMD + [(5000, dline("dir")), (7000, goal_line("explorar", "sensor"))], ["--yaw"], t_end=9000)
+fails += not ok(abs(float(at(tr, 8500)["curL"]) - 0.35) < 0.05, f"(m) goal explorar depois do diagnostico: volta a andar ({at(tr, 8500)['curL']})")
+tr, o = run([(300, goal_line("explorar", "sensor")), (6000, dline("dir"))], ["--yaw"], t_end=9000)
+fails += not ok(float(at(tr, 5500)["curL"]) > 0.3 and diags(o) and diags(o)[0]["psi"] > 30 and abs(float(at(tr, 8000)["curL"])) < 0.02,
+                "(m) teste pedido explorando: interrompe a FSM, gira e fica parado")
+fails += not ok(all(json.loads(m) for t, m in o if m.startswith("{")), "(m) linhas emitidas sao JSON valido")
+tr, o = run(ARMD + [(5000, '{"t":"trim","v":0.7}'), (5200, dline("zerar_trim"))], [], t_end=6000)
+fails += not ok(any('"zerar_trim"' in m for _, m in o) and float(at(tr, 5800)["trim"]) == 0, "(m) Zerar trim")
+
 # ===== Python <-> firmware =====
 from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink
 link = MemoryLink(); head = LinkRangeHead(link, settle_s=0.15)
