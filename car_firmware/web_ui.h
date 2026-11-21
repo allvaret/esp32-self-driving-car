@@ -136,32 +136,56 @@ const NM={dir:'Girar a direita',esq:'Girar a esquerda',reto:'Reto sem correcao',
 function f1(x){return x==null?'-':(+x).toFixed(1);}
 // sentido medido: pelo giro mediano (confiavel); o psi so se nao houver giro
 function gsign(m){const g=m.rate_med!=null?m.rate_med:m.psi;return g==null?null:g>0;}
+// degrau assentado: o giro mudou pouco dentro da janela de medida (dr = ultima - 1a amostra)
+function settled(r,d){return d==null||Math.abs(d)<=Math.max(20,0.15*Math.abs(r));}
+// roda que gira quase igual em qualquer duty (do mais alto ao mais baixo): o PWM nao chega nela. Atrito ou motor fraco
+// fazem a roda PARAR nos duties baixos; isto e o contrario (ela segue no maximo).
+function pwmIgnored(m){const v=[];(m.duty||[]).forEach((d,i)=>{const r=m.rate[i];if(r!=null)v.push([d,Math.abs(r)]);});
+  if(v.length<4)return '';v.sort((a,b)=>a[0]-b[0]);const mx=Math.max(...v.map(x=>x[1])),lo=v[0],hi=v[v.length-1];
+  if(mx>=60&&lo[1]>=0.7*mx&&hi[0]-lo[0]>=100)return 'ATENCAO: a roda gira quase igual em qualquer duty (de '+hi[0]+' a '+lo[0]+
+    '): o PWM NAO controla esta roda. Atrito ou motor fraco fariam ela parar nos duties baixos. Confira o fio do EN e a placa. Sem faixa sugerida.';
+  return '';}
 function wheel(m){
-  let s=NM[m.teste]+(m.abortado?'  ABORTADO: '+m.abortado:'')+'  (so ela, para frente; a outra parada)\nduty -> giro (°/s)';
-  (m.duty||[]).forEach((d,i)=>{const r=m.rate[i];s+='\n  '+d+' -> '+(r==null?'sem yaw':f1(r));});
-  s+='\npartida (|giro| >= 15°/s): '+(m.partida==null?'NAO PARTIU ate '+(m.duty||[]).slice(-1)[0]:'duty '+m.partida);
+  const du=m.duty||[],dr=m.dr||[];
+  let s=NM[m.teste]+(m.abortado?'  ABORTADO: '+m.abortado:'')+'  (so ela, para frente; a outra parada; duty descendo)\nduty -> giro (°/s)';
+  du.forEach((d,i)=>{const r=m.rate[i];s+='\n  '+d+' -> '+(r==null?'sem yaw':f1(r))+(r!=null&&!settled(r,dr[i])?'  (nao assentou: '+f1(dr[i])+')':'');});
+  if('minimo' in m)s+='\nmenor duty que mantem a roda girando (|giro| >= 15°/s): '+(m.minimo==null?'NAO GIROU nem com duty '+du[0]:
+    m.minimo+(m.minimo===Math.min(...du)?' (o menor testado: talvez gire mais baixo ainda)':''));
+  else if('partida' in m)s+='\npartida (|giro| >= 15°/s): '+(m.partida==null?'NAO PARTIU':'duty '+m.partida)+'  (teste antigo, subindo)';
+  const ig=pwmIgnored(m);if(ig)s+='\n'+ig;
   const rs=(m.rate||[]).filter(r=>r!=null&&Math.abs(r)>=15),want=m.teste==='roda_esq';
   if(rs.length){const pos=rs.filter(r=>r>0).length>rs.length/2;
     s+='\no giroscopio diz: carro girou para a '+(pos?'DIREITA':'ESQUERDA')+' (esperado: '+(want?'DIREITA':'ESQUERDA')+', girando sobre a roda parada)';}
   s+='\nQual roda girou?';wLast=m;$('dwh').style.display='flex';
   return s;
 }
-// faixa de duty por roda a partir dos testes por roda: reta giro = k*(duty - d0) nos degraus que andaram.
-// Mesma velocidade nas duas rodas para o mesmo comando: lo/hi de cada roda dao as velocidades vLo/vHi da roda que
-// parte mais tarde com lo = d0 + WM e hi = lo + WSPAN (perto do que o carro usa hoje: 130..150).
+// faixa de duty por roda a partir dos testes por roda: reta giro = k*(duty - d0) nos degraus que andaram e assentaram,
+// sem o TETO (degraus do alto em que o giro quase nao sobe mais: roda no maximo/patinando; em 21/11 eles achataram a
+// reta da esquerda para 2,8 graus/s por ponto). Mesma velocidade nas duas rodas para o mesmo comando: lo/hi de cada roda
+// dao as velocidades vLo/vHi da roda que parte mais tarde com lo = d0 + WM e hi = lo + WSPAN; nenhuma roda abaixo do
+// seu minimo (menor duty que a manteve girando no teste).
 const WM=5,WSPAN=25;let WSUG=null;
-function fitW(m){const p=[];(m.duty||[]).forEach((d,i)=>{const r=m.rate[i];if(r!=null&&Math.abs(r)>=15)p.push([d,Math.abs(r)]);});
-  if(p.length<2)return null;let n=p.length,sx=0,sy=0,sxx=0,sxy=0;p.forEach(([x,y])=>{sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;});
-  const k=(n*sxy-sx*sy)/(n*sxx-sx*sx);if(!(k>0))return null;return {k:k,d0:(sx-sy/k)/n};}
+function lsW(q){let n=q.length,sx=0,sy=0,sxx=0,sxy=0;q.forEach(([x,y])=>{sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;});
+  const k=(n*sxy-sx*sy)/(n*sxx-sx*sx);return {k:k,d0:(sx-sy/k)/n};}
+function fitW(m){if(pwmIgnored(m))return null;const p=[];
+  (m.duty||[]).forEach((d,i)=>{const r=m.rate[i];if(r!=null&&Math.abs(r)>=15&&settled(r,(m.dr||[])[i]))p.push([d,Math.abs(r)]);});
+  p.sort((a,b)=>a[0]-b[0]);
+  while(p.length>3){const f=lsW(p.slice(0,-1)),a=p[p.length-2],b=p[p.length-1];if((b[1]-a[1])/(b[0]-a[0])<0.5*f.k)p.pop();else break;}
+  if(p.length<2)return null;const f=lsW(p);if(!(f.k>0))return null;
+  f.min=m.minimo!=null?m.minimo:p[0][0];f.vmax=p[p.length-1][1];return f;}
 function suggest(){const a=DG.roda_esq,b=DG.roda_dir;if(!a||!b)return;
   const L=fitW(a),R=fitW(b);WSUG=null;$('wapl').disabled=true;
-  if(!L||!R){$('dsug').textContent='Faixa das rodas: precisa de pelo menos 2 degraus com giro em CADA roda'+
-    (!L?' (esquerda nao andou)':'')+(!R?' (direita nao andou)':'')+'. Roda que nao parte nem com duty alto = problema mecanico.';return;}
-  const ref=L.d0>=R.d0?L:R,vLo=ref.k*WM,vHi=ref.k*(WM+WSPAN),c=x=>Math.max(0,Math.min(255,Math.round(x)));
+  if(!L||!R){$('dsug').textContent='Faixa das rodas: sem faixa sugerida. Precisa de pelo menos 2 degraus assentados com giro em CADA roda, e as duas obedecendo o duty'+
+    (!L?' (esquerda: '+(pwmIgnored(a)?'nao obedece o PWM':'nao andou')+')':'')+(!R?' (direita: '+(pwmIgnored(b)?'nao obedece o PWM':'nao andou')+')':'')+
+    '. Roda que nao gira nem com duty alto = problema mecanico.';return;}
+  const ref=L.d0>=R.d0?L:R,c=x=>Math.max(0,Math.min(255,Math.round(x)));
+  let vLo=ref.k*WM;[L,R].forEach(w=>{vLo=Math.max(vLo,w.k*(w.min-w.d0));});
+  const vHi=vLo+ref.k*WSPAN;
   const s={pwm_min_l:c(L.d0+vLo/L.k),pwm_max_l:c(L.d0+vHi/L.k),pwm_min_r:c(R.d0+vLo/R.k),pwm_max_r:c(R.d0+vHi/R.k)};
   let t='Faixa sugerida (mesma velocidade nas duas rodas):\n  esquerda '+s.pwm_min_l+'..'+s.pwm_max_l+'  (parte em ~'+L.d0.toFixed(0)+', '+L.k.toFixed(1)+' °/s por ponto)'+
     '\n  direita  '+s.pwm_min_r+'..'+s.pwm_max_r+'  (parte em ~'+R.d0.toFixed(0)+', '+R.k.toFixed(1)+' °/s por ponto)';
   if(Math.max(s.pwm_max_l,s.pwm_max_r)>180)t+='\n  atencao: faixa alta; confira hold_pwm_max (200) para sobrar correcao';
+  if(vHi>0.9*Math.min(L.vmax,R.vmax))t+='\n  atencao: o topo da faixa passa da maior velocidade medida em uma das rodas (fora da reta medida)';
   if(Math.abs(L.k-R.k)/Math.max(L.k,R.k)>0.4)t+='\n  as rodas rendem muito diferente (>40%): caixa/roda com atrito?';
   WSUG=s;$('wapl').disabled=false;$('dsug').textContent=t;}
 $('wapl').onclick=()=>{if(!WSUG)return;send(Object.assign({t:'cfg'},WSUG));addLog('[diag] faixa das rodas enviada: '+JSON.stringify(WSUG),'var(--ac)');};

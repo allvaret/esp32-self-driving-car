@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.5.1
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.5.2
  *
  * CAMINHO 1: o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
  * a OPINIAO da visao ({"t":"vis"}) e o rumo do giroscopio ({"t":"yaw"}). Quem para, varre e desvia e este arquivo.
@@ -39,7 +39,7 @@
 #include <Preferences.h>        // NVS: guarda o trim aprendido do rumo entre desligamentos
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.5.1"
+#define FW_VERSION "car_firmware 0.5.2"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -221,13 +221,16 @@ static Preferences prefs;
 // diagnostico pelo visor ({"t":"diag","teste":..}): so armado; o FSM fica parado durante e DEPOIS do teste
 enum { D_NONE = 0, D_DIR, D_ESQ, D_RETO, D_RETO_CORR, D_RODA_E, D_RODA_D };
 static const char* DIAG_N[] = {"", "dir", "esq", "reto", "reto_corr", "roda_esq", "roda_dir"};
-// teste POR RODA: so uma roda, para frente, com DUTY BRUTO em degraus (d0, d0+dd, ... ate d1; step_ms cada); a outra
-// parada. O carro gira sobre a roda parada: o giro de cada degrau mede a velocidade daquela roda naquele duty.
-#define WSTEP_MAX 16
-static float wD0 = 110, wD1 = 230, wDD = 15, wStepMs = 300;
+// teste POR RODA: so uma roda, para frente, com DUTY BRUTO em degraus DECRESCENTES (d1, d1-dd, ... ate d0; step_ms
+// cada, o 1o com o dobro para a roda embalar); a outra parada. O carro gira sobre a roda parada: o giro de cada degrau
+// mede a velocidade daquela roda naquele duty. Descendo, cada degrau parte da roda ja girando e mede o regime; subindo a
+// partir do zero com degraus curtos (0.5.1) media so a ACELERACAO do carro (21/11). O ultimo degrau que ainda gira =
+// menor duty que mantem a roda andando (minimo).
+#define WSTEP_MAX 12
+static float wD0 = 45, wD1 = 220, wDD = 25, wStepMs = 600;
 static int wDuty = 0;                        // > 0: driveApply escreve SO a roda do teste com este duty
 static int wStep = -1, wN = 0, wBufN = 0;
-static float wRates[WSTEP_MAX], wBuf[16];
+static float wRates[WSTEP_MAX], wDrift[WSTEP_MAX], wBuf[16];
 static int wDuties[WSTEP_MAX];
 static int diagTest = D_NONE;
 static bool diagHold = false;              // armado mas parado (fim de um teste ou "armar" do diagnostico)
@@ -1027,7 +1030,7 @@ static void diagStart(int test, uint32_t now) {
   if (diagIsWheel(test)) {
     int n = wDD > 0 ? (int)((wD1 - wD0) / wDD) + 1 : 1;
     n = n < 1 ? 1 : (n > WSTEP_MAX ? WSTEP_MAX : n);
-    diagDur = (uint32_t)(n * wStepMs);
+    diagDur = (uint32_t)((n + 1) * wStepMs);               // o 1o degrau dura 2x (embalar)
     wStep = -1; wN = 0; wBufN = 0; wDuty = 0;
   }
   diagHavePsi = false; diagN = 0; diagNLR = 0; diagSumL = diagSumR = 0; diagYawT = yawT;
@@ -1044,28 +1047,32 @@ static float medianOf(float* a, int n) {
   return a[n / 2];
 }
 
-static void wheelCloseStep() {                           // fecha o degrau atual: mediana do giro (NAN = sem yaw)
+static void wheelCloseStep() {   // fecha o degrau: mediana do giro (NAN = sem yaw) e deriva (ultima - 1a amostra da janela)
   if (wStep < 0 || wN >= WSTEP_MAX) return;
   wDuties[wN] = wDuty;
+  wDrift[wN] = wBufN >= 2 ? wBuf[wBufN - 1] - wBuf[0] : 0;   // antes do medianOf (que ordena o buffer)
   wRates[wN++] = wBufN > 0 ? medianOf(wBuf, wBufN) : NAN;
   wBufN = 0;
 }
 
-// {"t":"diag","teste":"roda_esq","duty":[110,125,..],"rate":[0.0,3.1,..],"partida":140,"psi":..,"ms":..}
-// partida = 1o duty com |giro| >= 15 graus/s (a roda comecou a empurrar o carro); null = nao partiu
+// {"t":"diag","teste":"roda_esq","duty":[220,195,..],"rate":[390.1,..],"dr":[-4,..],"minimo":70,"psi":..,"ms":..}
+// dr = quanto o giro ainda mudava na janela de medida (grande = o degrau nao assentou);
+// minimo = ultimo degrau (descendo) ainda com |giro| >= 15 graus/s = menor duty que mantem a roda girando; null = nao girou
 static void wheelFinish(uint32_t now, const char* abort, const char* psi) {
-  char du[WSTEP_MAX * 5 + 4], ra[WSTEP_MAX * 8 + 4], pa[12];
-  int pu = 0, pr = 0, start = -1;
-  du[0] = ra[0] = 0;
+  char du[WSTEP_MAX * 5 + 4], ra[WSTEP_MAX * 8 + 4], dr[WSTEP_MAX * 6 + 4], pa[12];
+  int pu = 0, pr = 0, pd = 0, lo = -1;
+  bool moving = true;
+  du[0] = ra[0] = dr[0] = 0;
   for (int i = 0; i < wN; i++) {
     pu += snprintf(du + pu, sizeof(du) - pu, "%s%d", i ? "," : "", wDuties[i]);
     if (isnan(wRates[i])) pr += snprintf(ra + pr, sizeof(ra) - pr, "%snull", i ? "," : "");
     else pr += snprintf(ra + pr, sizeof(ra) - pr, "%s%.1f", i ? "," : "", wRates[i]);
-    if (start < 0 && !isnan(wRates[i]) && absf(wRates[i]) >= 15.0f) start = wDuties[i];
+    pd += snprintf(dr + pd, sizeof(dr) - pd, "%s%.0f", i ? "," : "", wDrift[i]);
+    if (moving && !isnan(wRates[i]) && absf(wRates[i]) >= 15.0f) lo = wDuties[i]; else moving = false;
   }
-  if (start >= 0) snprintf(pa, sizeof(pa), "%d", start); else strcpy(pa, "null");
-  emitf("{\"t\":\"diag\",\"teste\":\"%s\",\"duty\":[%s],\"rate\":[%s],\"partida\":%s,\"psi\":%s,\"ms\":%lu%s%s%s}",
-        DIAG_N[diagTest], du, ra, pa, psi, (unsigned long)(now - diagT0),
+  if (lo >= 0) snprintf(pa, sizeof(pa), "%d", lo); else strcpy(pa, "null");
+  emitf("{\"t\":\"diag\",\"teste\":\"%s\",\"duty\":[%s],\"rate\":[%s],\"dr\":[%s],\"minimo\":%s,\"psi\":%s,\"ms\":%lu%s%s%s}",
+        DIAG_N[diagTest], du, ra, dr, pa, psi, (unsigned long)(now - diagT0),
         abort ? ",\"abortado\":\"" : "", abort ? abort : "", abort ? "\"" : "");
 }
 
@@ -1099,13 +1106,15 @@ static void diagStep(uint32_t now, float* v, float* s) {
   if (fresh) diagPsi1 = yawPsi;
   if (diagIsWheel(diagTest)) {
     if (el >= diagDur) { diagFinish(now, NULL); return; }   // fecha o ultimo degrau
-    int i = (int)(el / (uint32_t)wStepMs);
+    uint32_t sm = (uint32_t)wStepMs;
+    int i = el < 2 * sm ? 0 : 1 + (int)((el - 2 * sm) / sm);   // degrau 0 dura 2 x step_ms (embalar a roda)
+    uint32_t t0 = i == 0 ? 0 : 2 * sm + (uint32_t)(i - 1) * sm, len = i == 0 ? 2 * sm : sm;
     if (i != wStep) { wheelCloseStep(); wStep = i; }
-    if (yawT != diagYawT) {                              // amostra nova: conta so nos ultimos 60% do degrau (giro assentado)
+    if (yawT != diagYawT) {                              // amostra nova: conta so na 2a metade do degrau (giro assentado)
       diagYawT = yawT;
-      if (fresh && el - (uint32_t)i * (uint32_t)wStepMs >= (uint32_t)(0.4f * wStepMs) && wBufN < 16) wBuf[wBufN++] = yawR;
+      if (fresh && el - t0 >= len / 2 && wBufN < 16) wBuf[wBufN++] = yawR;
     }
-    wDuty = (int)clampf(wD0 + i * wDD, 0.0f, 255.0f);
+    wDuty = (int)clampf(wD1 - i * wDD, 0.0f, 255.0f);
     if (el > 300 && !forwardAllowed(now)) diagFinish(now, "hard stop / sem leitura livre");
     return;                                              // v = s = 0: o driveApply escreve so a roda do teste
   }
@@ -1242,7 +1251,7 @@ static void handleJson(const char* line, uint32_t now) {
     for (int i = 1; i <= D_RODA_D; i++) if (strcmp(d, DIAG_N[i]) == 0) k = i;
     if (k == D_NONE) return;
     if (!armed) { emitf("{\"t\":\"diag\",\"teste\":\"%s\",\"erro\":\"arme antes (Armar parado)\"}", d); return; }
-    if (diagIsWheel(k)) {                                // degraus opcionais: {"d0":110,"d1":230,"dd":15,"step_ms":300}
+    if (diagIsWheel(k)) {                                // degraus opcionais (descendo de d1 a d0): {"d0":45,"d1":220,"dd":25,"step_ms":600}
       if (jsonNum(line, "d0", &x)) wD0 = clampf(x, 0, 255);
       if (jsonNum(line, "d1", &x)) wD1 = clampf(x, 0, 255);
       if (jsonNum(line, "dd", &x)) wDD = clampf(x, 1, 255);

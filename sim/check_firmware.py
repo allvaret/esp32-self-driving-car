@@ -8,7 +8,7 @@ Mundo do simulador (sim.cpp): sensor por angulo (-30,-15,0,+15,+30 graus), obsta
 (--obst t cm [--clear t]), janelas sem eco (--none t0 t1), yaw simulado das rodas (--yaw --world-dps N).
 Relogio virtual: `go` aos 200 ms arma aos 4200 ms (ARM_DELAY_MS = 4000).
 """
-import json, os, re, subprocess, sys, tempfile
+import json, math, os, re, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 def _repo_root(start):                         # sobe ate achar a pasta com control/hal.py
     d = start
@@ -357,48 +357,86 @@ tr, o = run([(300, goal_line("explorar", "sensor")), (6000, dline("dir"))], ["--
 fails += not ok(float(at(tr, 5500)["curL"]) > 0.3 and diags(o) and diags(o)[0]["psi"] > 30 and abs(float(at(tr, 8000)["curL"])) < 0.02,
                 "(m) teste pedido explorando: interrompe a FSM, gira e fica parado")
 fails += not ok(all(json.loads(m) for t, m in o if m.startswith("{")), "(m) linhas emitidas sao JSON valido")
-# teste POR RODA: duty bruto em degraus, uma roda so; roda direita com zona morta maior (como no carro de 21/11)
+# teste POR RODA: duty bruto em degraus DESCENDO (220..45, 600 ms, o 1o com 1200 ms), uma roda so; roda direita com
+# zona morta maior (como no carro de 21/11)
 WTEST = ["--yaw", "--world-dps", 40, "--wheel-left", 1.0, 120, "--wheel-right", 1.0, 141]
-tr, o = run(ARMD + [(5000, dline("roda_esq")), (9000, dline("roda_dir"))], WTEST, t_end=13000)
+WDUTY = [220, 195, 170, 145, 120, 95, 70, 45]
+tr, o = run(ARMD + [(5000, dline("roda_esq")), (11000, dline("roda_dir"))], WTEST, t_end=17500)
 dd = {d["teste"]: d for d in diags(o)}
 e, d_ = dd.get("roda_esq", {}), dd.get("roda_dir", {})
-fails += not ok(e.get("duty") == list(range(110, 231, 15)) and 2650 <= e.get("ms", 0) <= 2800,
-                f"(m) Roda esq.: 9 degraus de duty 110..230 em ~2,7 s: {e.get('duty')} ({e.get('ms')} ms)")
+fails += not ok(e.get("duty") == WDUTY and 5350 <= e.get("ms", 0) <= 5500 and len(e.get("dr", [])) == 8,
+                f"(m) Roda esq.: 8 degraus de duty 220..45 DESCENDO em ~5,4 s (dr por degrau): {e.get('duty')} ({e.get('ms')} ms)")
 rs = [r for r in e.get("rate", []) if r is not None]
-fails += not ok(len(rs) == 9 and all(r >= -0.5 for r in rs) and rs[-1] > 100 and e.get("partida") in (125, 140),
-                f"(m) Roda esq.: carro gira para a DIREITA (sobre a roda parada), crescendo com o duty; partida {e.get('partida')}: {e.get('rate')}")
+fails += not ok(len(rs) == 8 and all(r >= -0.5 for r in rs) and rs[0] > 100 and e.get("minimo") == 145,
+                f"(m) Roda esq.: carro gira para a DIREITA (sobre a roda parada), caindo com o duty; minimo {e.get('minimo')} (esperado 145): {e.get('rate')}")
 rs = [r for r in d_.get("rate", []) if r is not None]
-fails += not ok(len(rs) == 9 and all(r <= 0.5 for r in rs) and rs[-1] < -100 and d_.get("partida") == 155,
-                f"(m) Roda dir.: gira para a ESQUERDA; zona morta maior => partida {d_.get('partida')} (esperado 155): {d_.get('rate')}")
-w_e = [r for r in tr if 5400 <= r["t"] <= 7600]
-w_d = [r for r in tr if 9400 <= r["t"] <= 11600]
-fails += not ok(all(int(r["enbPWM"]) == 0 and int(r["enaPWM"]) >= 110 and r["in1"] == "0" and r["in2"] == "1" for r in w_e)
-                and all(int(r["enaPWM"]) == 0 and int(r["enbPWM"]) >= 110 and r["in3"] == "0" and r["in4"] == "1" for r in w_d),
+fails += not ok(len(rs) == 8 and all(r <= 0.5 for r in rs) and rs[0] < -100 and d_.get("minimo") == 170,
+                f"(m) Roda dir.: gira para a ESQUERDA; zona morta maior => minimo {d_.get('minimo')} (esperado 170): {d_.get('rate')}")
+w_e = [r for r in tr if 5400 <= r["t"] <= 10200]
+w_d = [r for r in tr if 11400 <= r["t"] <= 16200]
+fails += not ok(all(int(r["enbPWM"]) == 0 and int(r["enaPWM"]) >= 45 and r["in1"] == "0" and r["in2"] == "1" for r in w_e)
+                and all(int(r["enaPWM"]) == 0 and int(r["enbPWM"]) >= 45 and r["in3"] == "0" and r["in4"] == "1" for r in w_d),
                 "(m) Roda esq. aciona SO o ENA (para frente), Roda dir. SO o ENB; o sentido de cada roda e o de sempre")
-fails += not ok(all(abs(float(r["curL"])) < 0.02 and int(r["enaPWM"]) == 0 and int(r["enbPWM"]) == 0 for r in tr if 7900 <= r["t"] <= 8900 or r["t"] >= 12000),
+fails += not ok(all(abs(float(r["curL"])) < 0.02 and int(r["enaPWM"]) == 0 and int(r["enbPWM"]) == 0 for r in tr if 10600 <= r["t"] <= 10900 or r["t"] >= 16700),
                 "(m) depois do teste por roda o carro fica parado (duty 0)")
 tr, o = run(ARMD + [(5000, '{"t":"diag","teste":"roda_dir","d0":130,"d1":160,"dd":10,"step_ms":200}')], WTEST, t_end=7000)
 d_ = (diags(o) or [{}])[0]
-fails += not ok(d_.get("duty") == [130, 140, 150, 160] and 750 <= d_.get("ms", 0) <= 900, f"(m) degraus configuraveis (d0/d1/dd/step_ms): {d_.get('duty')} {d_.get('ms')} ms")
+fails += not ok(d_.get("duty") == [160, 150, 140, 130] and 950 <= d_.get("ms", 0) <= 1100, f"(m) degraus configuraveis (d0/d1/dd/step_ms): {d_.get('duty')} {d_.get('ms')} ms")
 tr, o = run(ARMD + [(5000, dline("roda_esq"))], WTEST + ["--obst", 6000, 15], t_end=8000)
 d_ = (diags(o) or [{}])[0]
 fails += not ok("abortado" in d_ and all(int(r["enaPWM"]) == 0 for r in tr if r["t"] > 6300), f"(m) hard stop vale no teste por roda: {d_.get('abortado')}")
 
-# faixa de duty POR RODA (pwm_min_l/r, pwm_max_l/r): mesma conta do visor (web_ui.h: fitW/suggest)
-def fit_w(m):
-    p = [(d, abs(r)) for d, r in zip(m["duty"], m["rate"]) if r is not None and abs(r) >= 15]
-    n = len(p); sx = sum(x for x, _ in p); sy = sum(y for _, y in p)
-    sxx = sum(x * x for x, _ in p); sxy = sum(x * y for x, y in p)
+# faixa de duty POR RODA (pwm_min_l/r, pwm_max_l/r): mesma conta do visor (web_ui.h: settled/pwmIgnored/fitW/suggest)
+def settled(r, d): return d is None or abs(d) <= max(20, 0.15 * abs(r))
+def pwm_ignored(m):
+    v = sorted((d, abs(r)) for d, r in zip(m["duty"], m["rate"]) if r is not None)
+    if len(v) < 4: return False
+    mx = max(r for _, r in v)
+    return mx >= 60 and v[0][1] >= 0.7 * mx and v[-1][0] - v[0][0] >= 100
+def _ls(q):
+    n = len(q); sx = sum(x for x, _ in q); sy = sum(y for _, y in q)
+    sxx = sum(x * x for x, _ in q); sxy = sum(x * y for x, y in q)
     k = (n * sxy - sx * sy) / (n * sxx - sx * sx)
     return k, (sx - sy / k) / n
+def fit_w(m):
+    if pwm_ignored(m): return None
+    drs = m.get("dr") or [None] * len(m["duty"])
+    p = sorted((d, abs(r)) for d, r, dr_ in zip(m["duty"], m["rate"], drs) if r is not None and abs(r) >= 15 and settled(r, dr_))
+    while len(p) > 3:                                    # teto: degraus do alto em que o giro quase nao sobe mais
+        k, _ = _ls(p[:-1]); (xa, ya), (xb, yb) = p[-2], p[-1]
+        if (yb - ya) / (xb - xa) < 0.5 * k: p.pop()
+        else: break
+    if len(p) < 2: return None
+    k, d0 = _ls(p)
+    if not k > 0: return None
+    return {"k": k, "d0": d0, "min": m["minimo"] if m.get("minimo") is not None else p[0][0], "vmax": p[-1][1]}
 def suggest(a, b, wm=5, wspan=25):
-    (kl, dl), (kr, dr) = fit_w(a), fit_w(b)
-    kref, _ = (kl, dl) if dl >= dr else (kr, dr)
-    vlo, vhi = kref * wm, kref * (wm + wspan)
-    return {"pwm_min_l": round(dl + vlo / kl), "pwm_max_l": round(dl + vhi / kl),
-            "pwm_min_r": round(dr + vlo / kr), "pwm_max_r": round(dr + vhi / kr)}
+    L, R = fit_w(a), fit_w(b)
+    if not L or not R: return None
+    ref = L if L["d0"] >= R["d0"] else R
+    vlo = max([ref["k"] * wm] + [w["k"] * (w["min"] - w["d0"]) for w in (L, R)])
+    vhi = vlo + ref["k"] * wspan
+    rnd = lambda x: max(0, min(255, int(math.floor(x + 0.5))))   # Math.round do JS
+    return {"pwm_min_l": rnd(L["d0"] + vlo / L["k"]), "pwm_max_l": rnd(L["d0"] + vhi / L["k"]),
+            "pwm_min_r": rnd(R["d0"] + vlo / R["k"]), "pwm_max_r": rnd(R["d0"] + vhi / R["k"])}
+# log de 21/11 (0.5.1, degraus SUBINDO de 300 ms): a esquerda trava em ~395 graus/s de 170 em diante. Com esses pontos
+# a reta antiga dava 2,8 graus/s por ponto (igual a direita) e a faixa 64..89 / 106..131 que nao endireitou o carro.
+F21E = {"duty": list(range(110, 231, 15)), "rate": [59.3, 142.9, 227.7, 352.3, 396.9, 391.5, 395.2, 399.5, 393.3], "minimo": None}
+F21D = {"duty": list(range(110, 231, 15)), "rate": [-29.2, -56.2, -100.2, -147.7, -195.5, -244.5, -282.6, -309.1, -348], "minimo": None}
+fe, fd = fit_w(F21E), fit_w(F21D)
+fails += not ok(fe and fe["k"] > 5 and 95 < fe["d0"] < 110 and fe["vmax"] < 360 and fd and 2.3 < fd["k"] < 3.2,
+                f"(p) log 21/11: o teto da esquerda (~395 de 170 a 230) sai da reta: esquerda {fe and round(fe['k'], 1)} graus/s por ponto "
+                f"(parte ~{fe and round(fe['d0'])}), direita {fd and round(fd['k'], 1)} (antes: 2,8 nas duas)")
+tr, o = run(ARMD + [(5000, dline("roda_esq"))], WTEST + ["--nopwm-left", "--tau", 150], t_end=11000)
+e = (diags(o) or [{}])[0]
+fails += not ok(e.get("rate") and pwm_ignored(e) and fit_w(e) is None and not pwm_ignored(F21E),
+                f"(p) roda que ignora o PWM (gira igual de 220 a 45) e detectada e fica sem faixa: {e.get('rate')}")
+tr, o = run(ARMD + [(5000, dline("roda_esq"))], WTEST + ["--tau", 150], t_end=11000)
+e = (diags(o) or [{}])[0]
+fails += not ok(e.get("rate") and all(settled(r, d) for r, d in zip(e["rate"], e["dr"]) if r is not None) and not pwm_ignored(e),
+                f"(p) com inercia (tau 150 ms) os degraus de 600 ms descendo assentam: rate {e.get('rate')} dr {e.get('dr')}")
 UNEQ2 = ["--yaw", "--world-dps", 40, "--wheel-left", 1.0, 120, "--wheel-right", 0.7, 141]
-tr, o = run(ARMD + [(5000, dline("roda_esq")), (9000, dline("roda_dir"))], UNEQ2, t_end=13000)
+tr, o = run(ARMD + [(5000, dline("roda_esq")), (11000, dline("roda_dir"))], UNEQ2, t_end=17500)
 dd = {d["teste"]: d for d in diags(o)}
 sug = suggest(dd["roda_esq"], dd["roda_dir"])
 fails += not ok(sug["pwm_min_r"] > sug["pwm_min_l"] and (sug["pwm_max_r"] - sug["pwm_min_r"]) > (sug["pwm_max_l"] - sug["pwm_min_l"]),
@@ -488,7 +526,7 @@ fails += not ok(max(sd for _, sd in old) > 100, f"(q) controle: com os ganhos an
 new = reto_corr_series([])
 fails += not ok(all(sd < 15 for _, sd in new) and abs(new[0][0]) < 15 and all(abs(m) < 5 for m, _ in new[2:]),
                 f"(q) ganhos novos (0,0015/0,015, PWM 10 bits): estavel, 1o reto ja < 15 graus/s e < 5 a partir do 3o: {new}")
-tr, o = run(ARMD + [(5000, dline("roda_esq")), (9000, dline("roda_dir"))], CAR21, t_end=13000)
+tr, o = run(ARMD + [(5000, dline("roda_esq")), (11000, dline("roda_dir"))], CAR21, t_end=17500)
 dd = {d["teste"]: d for d in diags(o)}
 sug = suggest(dd["roda_esq"], dd["roda_dir"])
 cfg = json.dumps(dict(t="cfg", **sug), separators=(",", ":"))

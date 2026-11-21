@@ -50,9 +50,11 @@ static float W_tau = 0;                                    // inercia (ms): o gi
 // "Para frente" em cada roda = IN_a LOW / IN_b HIGH (o sentido ja foi acertado no carro com o firmware atual).
 // Velocidade da roda a partir do PWM: u = ef * max(0, duty - zm) / (pwm_max - pwm_min).
 // Padrao ef = 1 e zona morta zm = pwm_min: u = |comando| (carro ideal). --wheel-left/right ef zm muda isso.
+// --nopwm-left: a roda esquerda IGNORA o PWM (EN preso em 1): com sentido dado, gira como em duty 255.
 static float W_effL = 1, W_effR = 1, W_dzL = NAN, W_dzR = NAN;
-static float wheelU(int en, int ina, int inb, float eff, float dz) {
-  float duty = duty8(en);
+static bool W_noPwmL = false;
+static float wheelU(int en, int ina, int inb, float eff, float dz, bool noPwm = false) {
+  float duty = noPwm ? 255.0f : duty8(en);
   int dir = (g_pin[ina] == LOW && g_pin[inb] == HIGH) ? 1 : ((g_pin[ina] == HIGH && g_pin[inb] == LOW) ? -1 : 0);
   if (duty <= 0 || dir == 0) return 0;
   float z = std::isnan(dz) ? P.pwm_min : dz;
@@ -131,6 +133,7 @@ int main(int argc, char** argv) {
     else if (a == "--nvs") { std::string k = argv[++i]; g_nvs[k] = (float)atof(argv[++i]); }
     else if (a == "--wheel-left") { f(W_effL); f(W_dzL); }
     else if (a == "--wheel-right") { f(W_effR); f(W_dzR); }
+    else if (a == "--nopwm-left") W_noPwmL = true;
     else if (a == "--ws") g_ws_clients = atoi(argv[++i]);
     else if (a == "--input") inFile = argv[++i];
     else if (a == "--set") { std::string k = argv[++i]; float v = (float)atof(argv[++i]);
@@ -154,7 +157,7 @@ int main(int argc, char** argv) {
     g_us += 2000;
     loop();
     double dt = (double)(g_us - last_us) / 1e6; last_us = g_us;
-    W_uL = wheelU(PIN_ENA, PIN_IN1, PIN_IN2, W_effL, W_dzL);   // roda ESQUERDA (ENA, OUT1/OUT2)
+    W_uL = wheelU(PIN_ENA, PIN_IN1, PIN_IN2, W_effL, W_dzL, W_noPwmL);   // roda ESQUERDA (ENA, OUT1/OUT2)
     W_uR = wheelU(PIN_ENB, PIN_IN3, PIN_IN4, W_effR, W_dzR);   // roda DIREITA (ENB, OUT3/OUT4)
     double cmdRate = W_dps * (double)(W_uL - W_uR) / 1.2;  // + = direita (roda esquerda mais rapida)
     W_rate = W_tau > 0 ? W_rate + (cmdRate - W_rate) * (dt * 1000.0) / (W_tau + dt * 1000.0) : cmdRate;
