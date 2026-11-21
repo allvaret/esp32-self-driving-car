@@ -146,8 +146,8 @@ A correção roda no ESP32 nos dois modos (sensor e visão); o brain manda `s = 
 
 | Parâmetro (config / firmware) | Padrão | Status | Como calibrar |
 |---|---|---|---|
-| `hold_kp` | 0,01 por °/s | DEMO | Amortece o giro. Se o carro balança de um lado a outro em reta, diminua. |
-| `hold_ki` | 0,05 por ° | DEMO | Puxa o rumo de volta ao do início do trecho. Se demora a endireitar, aumente aos poucos. |
+| `hold_kp` | 0,0015 por °/s | DEMO | Amortece o giro. Era 0,01: no carro de 21/11 uma unidade de roda vale ~400°/s de giro e, com o yaw ~60 ms atrasado, 0,01 **oscila** no simulador (desvio de ~370°/s). Se o carro balança de um lado a outro em reta, diminua. |
+| `hold_ki` | 0,015 por ° | DEMO | Puxa o rumo de volta ao do início do trecho. Era 0,05. Se demora a endireitar (carro pouco sensível), aumente aos poucos, junto com `hold_kp` (razão ~10). |
 | `hold_s_max` | 2,0 | DEMO | Teto da correção. No simulador, uma roda com 65 % de eficiência e zona morta 5 pontos maior pede ~1,3. Ver `hc` no `state`: se fica colado em ±`hold_s_max`, falta autoridade (suba `hold_pwm_max` ou `pwm_max`). |
 | `hold_s_eps` | 0,05 | DEMO | `|s|` abaixo disso é reta. |
 | `hold_delay_s` / `hold_delay_ms` | 0,1 s | DEMO | O PI entra no máximo 0,1 s depois da arrancada (o trim aprendido vale desde o 1º ciclo). |
@@ -182,3 +182,6 @@ Como o visor calcula: em cada teste por roda, reta `giro = k·(duty − d0)` nos
 A roda que parte mais tarde fica com `pwm_min = d0 + 5` e `pwm_max = pwm_min + 25`; a outra recebe o duty que dá a
 **mesma velocidade** nesses dois pontos. Assim o mesmo comando anda igual nas duas rodas e a correção de rumo só cobre
 o resto (carga, bateria). Se `hc` ainda ficar colado em ±2, a faixa está errada ou falta `hold_pwm_max`.
+
+O PWM dos motores é de **10 bits** desde a 0.5.1 (os parâmetros continuam em 0..255, com fração). No carro de 21/11
+1 ponto de duty vale ~19°/s de giro; em 8 bits a correção pulava de ponto em ponto e a reta ficava balançando ±10°/s.

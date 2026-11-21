@@ -54,8 +54,8 @@ class ControlConfig:
     yaw_lead_s: float = 0.1       # antecipa o fim da curva em giro*lead (compensa a inercia)
     # --- rumo em reta NO ESP32 (firmware: hold_*, trim_*). Unidades de RODA: 0,1 = +0,1 de comando na roda lenta ---
     # s_corr = -(hold_kp*giro + hold_ki*psi_trecho) + trim aprendido, limitado a +-hold_s_max; > 0 = mais forca na esquerda
-    hold_kp: float = 0.01         # por grau/s de giro
-    hold_ki: float = 0.05         # por grau de rumo desde o inicio do trecho reto
+    hold_kp: float = 0.0015       # por grau/s de giro (0,01 oscilava no modelo do carro de 21/11: ~400 graus/s por unidade)
+    hold_ki: float = 0.015        # por grau de rumo desde o inicio do trecho reto
     hold_s_max: float = 2.0       # teto da correcao (compensa ~35% de diferenca entre as rodas)
     hold_s_eps: float = 0.05      # |s| abaixo disso = trecho reto
     hold_delay_s: float = 0.1     # o PI entra no maximo 0,1 s depois da arrancada (o trim vale desde o inicio)

@@ -88,6 +88,8 @@
 #define MEASURE_PERIOD_MS 65    // HC-SR04: ciclo >= 60 ms
 #define ARM_DELAY_MS 4000       // cobre a calibracao do chao no celular (o ESP32 ignora vis com ok:0)
 #define MOTOR_PWM_HZ 1000
+#define MOTOR_PWM_BITS 10       // 10 bits: 1 ponto de duty (escala 0..255 dos parametros) = 4 passos. No carro de 21/11
+                                // 1 ponto = ~19 graus/s de giro: com 8 bits a correcao de rumo "pulava" de ponto em ponto
 #define KICK_STAGGER_MS 60      // escalonamento: um motor parte 60 ms depois do outro
 #define MAX_POS 6               // posicoes de varredura (3 passos de cada lado)
 
@@ -122,7 +124,10 @@ struct Params {
   // em UNIDADES DE RODA (0,1 = a roda lenta recebe +0,1 de comando; com pwm 130..150, 2 pontos de duty).
   // s_corr > 0 = mais forca na roda ESQUERDA (corrige um carro que puxa para a esquerda).
   // A roda lenta SOBE primeiro (ate hold_pwm_max de duty); a rapida so desce se a lenta saturar.
-  float hold_kp = 0.01f, hold_ki = 0.05f, hold_s_max = 2.0f, hold_s_eps = 0.05f, hold_delay_ms = 100;
+  // Ganhos baixos de proposito: no carro de 21/11 1 unidade de roda vale ~400 graus/s de giro; com 0,01/0,05 a malha
+  // (yaw ~60 ms atrasado + inercia) OSCILA no simulador. 0,0015/0,015 fica estavel de ~100 a ~500 graus/s por unidade
+  // e com o yaw ate 120 ms atrasado; num carro menos sensivel os 2 primeiros trechos convergem devagar (o trim aprende).
+  float hold_kp = 0.0015f, hold_ki = 0.015f, hold_s_max = 2.0f, hold_s_eps = 0.05f, hold_delay_ms = 100;
   float hold_psi_max = 30, hold_pwm_max = 200;
   // trim aprendido: integrador lento do termo hold_ki*psi (por s), persiste entre trechos e em NVS.
   float trim_rate = 0.5f, trim_max = 1.5f;
@@ -539,15 +544,20 @@ static bool forwardAllowed(uint32_t now) {
 static float wheelLo(int w) { float x = w ? P.pwm_min_r : P.pwm_min_l; return clampf(x >= 0 ? x : P.pwm_min, 0.0f, 255.0f); }
 static float wheelHi(int w) { float x = w ? P.pwm_max_r : P.pwm_max_l; return clampf(x >= 0 ? x : P.pwm_max, wheelLo(w), 255.0f); }
 
+static void motorDuty(int pin, int ch, float duty255) {   // duty na escala 0..255 (com fracao) -> MOTOR_PWM_BITS
+  const float full = (float)((1 << MOTOR_PWM_BITS) - 1);
+  pwmWrite(pin, ch, (uint32_t)lroundf(clampf(duty255, 0.0f, 255.0f) * full / 255.0f));
+}
+
 static void motorWrite(int w, int in1, int in2, int pin, int ch, float v, Kick& k, uint32_t now, uint32_t delayMs) {
 #if MOTORS_ENABLED
   float a = absf(v);
   if (a < 0.02f) {
     k.dir = 0;                                             // parado: a proxima saida ganha pulso
 #if MOTOR_BRAKE
-    digitalWrite(in1, HIGH); digitalWrite(in2, HIGH); pwmWrite(pin, ch, 255);
+    digitalWrite(in1, HIGH); digitalWrite(in2, HIGH); motorDuty(pin, ch, 255);
 #else
-    digitalWrite(in1, LOW); digitalWrite(in2, LOW); pwmWrite(pin, ch, 0);
+    digitalWrite(in1, LOW); digitalWrite(in2, LOW); motorDuty(pin, ch, 0);
 #endif
     return;
   }
@@ -562,7 +572,7 @@ static void motorWrite(int w, int in1, int in2, int pin, int ch, float v, Kick& 
     if (left > (int32_t)P.kick_ms) duty = 0;               // escalonamento: espera a vez de partir
     else if (P.kick_pwm > duty) duty = P.kick_pwm;         // arrancada
   }
-  pwmWrite(pin, ch, (uint32_t)clampf(duty, 0.0f, 255.0f));
+  motorDuty(pin, ch, duty);
 #else
   (void)in1; (void)in2; (void)pin; (void)ch; (void)v; (void)k; (void)now; (void)delayMs;
 #endif
@@ -618,7 +628,7 @@ static void motorRaw(int in1, int in2, int pin, int ch, int dir, int duty, Kick&
   k.dir = duty > 0 ? dir : 0;
   digitalWrite(in1, dir > 0 ? HIGH : LOW);
   digitalWrite(in2, dir > 0 ? LOW : HIGH);
-  pwmWrite(pin, ch, (uint32_t)(duty < 0 ? 0 : (duty > 255 ? 255 : duty)));
+  motorDuty(pin, ch, (float)duty);
 #else
   (void)in1; (void)in2; (void)pin; (void)ch; (void)dir; (void)duty; (void)k;
 #endif
@@ -1333,8 +1343,8 @@ void setup() {
 #endif
 #if MOTORS_ENABLED
   pinMode(PIN_IN1, OUTPUT); pinMode(PIN_IN2, OUTPUT); pinMode(PIN_IN3, OUTPUT); pinMode(PIN_IN4, OUTPUT);
-  pwmAttach(PIN_ENA, CH_ENA, MOTOR_PWM_HZ, 8);
-  pwmAttach(PIN_ENB, CH_ENB, MOTOR_PWM_HZ, 8);
+  pwmAttach(PIN_ENA, CH_ENA, MOTOR_PWM_HZ, MOTOR_PWM_BITS);
+  pwmAttach(PIN_ENB, CH_ENB, MOTOR_PWM_HZ, MOTOR_PWM_BITS);
 #endif
   prefs.begin("carro", true);                              // trim aprendido do rumo (0 na 1a vez)
   holdTrim = holdTrimSaved = clampf(prefs.getFloat("trim", 0.0f), -P.trim_max, P.trim_max);

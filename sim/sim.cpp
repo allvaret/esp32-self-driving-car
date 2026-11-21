@@ -22,8 +22,14 @@ int g_ws_clients = 0;
 unsigned millis_for_ws() { return millis(); }
 esp_reset_reason_t esp_reset_reason() { return ESP_RST_POWERON; }
 static int g_pin[64];
-static int g_pwm_pin[64];       // duty por pino (nos dois cores)
+static int g_pwm_pin[64];       // duty por pino (nos dois cores), bruto
+static int g_bits[64];          // resolucao do PWM por pino (0 = nao configurado: 8)
+static int g_chbits[16];
 static int g_ch2pin[16];
+static float duty8(int pin) {   // duty na escala 0..255, qualquer resolucao
+  int b = g_bits[pin] ? g_bits[pin] : 8;
+  return (float)g_pwm_pin[pin] * 255.0f / (float)((1 << b) - 1);
+}
 static int g_btn = HIGH;
 static std::deque<char> g_in;
 static std::string g_outbuf;
@@ -46,7 +52,7 @@ static float W_tau = 0;                                    // inercia (ms): o gi
 // Padrao ef = 1 e zona morta zm = pwm_min: u = |comando| (carro ideal). --wheel-left/right ef zm muda isso.
 static float W_effL = 1, W_effR = 1, W_dzL = NAN, W_dzR = NAN;
 static float wheelU(int en, int ina, int inb, float eff, float dz) {
-  int duty = g_pwm_pin[en];
+  float duty = duty8(en);
   int dir = (g_pin[ina] == LOW && g_pin[inb] == HIGH) ? 1 : ((g_pin[ina] == HIGH && g_pin[inb] == LOW) ? -1 : 0);
   if (duty <= 0 || dir == 0) return 0;
   float z = std::isnan(dz) ? P.pwm_min : dz;
@@ -77,11 +83,11 @@ unsigned long pulseIn(int, int, unsigned long timeout) {
   return (unsigned long)us;
 }
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-bool ledcAttach(uint8_t, uint32_t, uint8_t) { return true; }
+bool ledcAttach(uint8_t pin, uint32_t, uint8_t bits) { g_bits[pin] = bits; return true; }
 bool ledcWrite(uint8_t pin, uint32_t duty) { g_pwm_pin[pin] = (int)duty; return true; }
 #else
-double ledcSetup(uint8_t, double, uint8_t) { return 0; }
-void ledcAttachPin(uint8_t pin, uint8_t ch) { g_ch2pin[ch] = pin; }
+double ledcSetup(uint8_t ch, double, uint8_t bits) { g_chbits[ch] = bits; return 0; }
+void ledcAttachPin(uint8_t pin, uint8_t ch) { g_ch2pin[ch] = pin; g_bits[pin] = g_chbits[ch]; }
 void ledcWrite(uint8_t ch, uint32_t duty) { g_pwm_pin[g_ch2pin[ch]] = (int)duty; }
 #endif
 int SerialStub::available() { return (int)g_in.size(); }
@@ -162,9 +168,9 @@ int main(int argc, char** argv) {
     if (cst != pc || sub != ps || (int)armed != pa) { printf("EV %u cst=%d sub=%d subn=%s armed=%d psi=%.2f why=%s\n", millis(), cst, sub, SUBN[sub], armed, W_psi, why); pc = cst; ps = sub; pa = armed; }
     if (millis() >= next_tr) { next_tr = millis() + 100;
       printf("TR %u armed=%d mode=%d cst=%d sub=%d subn=%s curL=%.3f curR=%.3f servo=%.1f center=%.1f cls=%d delegated=%d psi=%.1f "
-             "enaPWM=%d enbPWM=%d in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f hold=%d hc=%.3f trim=%.3f\n",
+             "enaPWM=%.0f enbPWM=%.0f in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f hold=%d hc=%.3f trim=%.3f\n",
              millis(), armed, mode, cst, sub, SUBN[sub], curL, curR, servoDeg, centerCm, haveC ? centerClass(millis()) : -1, (int)delegated, W_psi,
-             g_pwm_pin[PIN_ENA], g_pwm_pin[PIN_ENB],
+             duty8(PIN_ENA), duty8(PIN_ENB),
              g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4], g_pwm_pin[PIN_STEER_SERVO],
              (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate, holdMode, holdCorr, holdTrim); }
   }

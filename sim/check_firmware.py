@@ -291,12 +291,11 @@ m0 = seg_stats(tr, segs[0])[0]
 fails += not ok(m0 > 100, f"(l) controle: sem correcao, com L = R o carro gira {m0:+.0f} graus/s (como no log de 20/11)")
 tr, o = run(seg_inp, WHEELS, t_end=t)
 st = [seg_stats(tr, s0) for s0 in segs]
-fails += not ok(all(abs(m) < 10 for m, _, _ in st), f"(l) com correcao: giro medio de 1 a 2 s de cada trecho < 10 graus/s: {[round(m, 1) for m, _, _ in st]}")
-first = [float(r["rate"]) for r in tr if segs[0] + 500 <= r["t"] < segs[0] + 1000]
-fails += not ok(abs(sum(first) / len(first)) < 25 and abs(st[0][0]) < 10,
-                f"(l) 1o trecho (trim 0): em 1 s o giro medio ja cai abaixo de 10 graus/s ({st[0][0]:+.1f}; 0,5-1 s: {sum(first)/len(first):+.1f})")
+fails += not ok(all(abs(m) < 10 for m, _, _ in st[2:]), f"(l) com correcao: do 3o trecho em diante, giro medio de 1 a 2 s < 10 graus/s: {[round(m, 1) for m, _, _ in st]}")
+fails += not ok(abs(st[0][0]) < 60 and abs(st[1][0]) < 25,
+                f"(l) carro POUCO sensivel e trim 0 (ganhos baixos para nao oscilar no carro real): 135 -> {st[0][0]:+.1f} (1o trecho) -> {st[1][0]:+.1f} (2o)")
 trims = [tm for _, tm, _ in st]
-fails += not ok(trims[0] < -0.5 and abs(trims[-1] - trims[-2]) < 0.03 and abs(trims[-2] - trims[-3]) < 0.06 and abs(st[-1][2] - trims[-1]) < 0.15,
+fails += not ok(trims[0] < -0.4 and abs(trims[-1] - trims[-2]) < 0.03 and abs(trims[-2] - trims[-3]) < 0.06 and abs(st[-1][2] - trims[-1]) < 0.15,
                 f"(l) o trim aprendido persiste entre trechos e converge: {[round(x, 3) for x in trims]} (correcao final {st[-1][2]:+.2f})")
 r = at(tr, segs[-1] + 1500)
 fails += not ok(float(r["curR"]) > 1.0 and abs(float(r["curL"]) - 0.35) < 0.01,
@@ -316,7 +315,8 @@ w = [float(r["rate"]) for r in tr if 6000 <= r["t"] < 8000]
 fails += not ok(sum(w) / len(w) > 100, f"(l) controle: sem trim e sem yaw o carro gira ({sum(w)/len(w):+.0f} graus/s)")
 tr, o = run(AUTO, WHEELS, t_end=8000)
 w = [float(r["rate"]) for r in tr if 6500 <= r["t"] < 8000]
-fails += not ok(at(tr, 7000)["cst"] == "0" and abs(sum(w) / len(w)) < 10, f"(l) modo auto (fonte sensor): FRENTE tambem corrige ({sum(w)/len(w):+.1f} graus/s)")
+fails += not ok(at(tr, 7000)["cst"] == "0" and abs(sum(w) / len(w)) < 30,
+                f"(l) modo auto (fonte sensor): FRENTE tambem corrige (trim 0: {sum(w)/len(w):+.1f} graus/s; sem correcao 135)")
 tr, o = run(base + drives(5000, 8000, 0.3, 0.5), WHEELS, t_end=8000)
 fails += not ok(at(tr, 7000)["hold"] == "0" and float(at(tr, 7000)["hc"]) == 0, "(l) com s fora de +-hold_s_eps (curva pedida) nao corrige")
 tr, o = run([(100, "trim 0.4"), (200, "trim")], [], t_end=500)
@@ -465,6 +465,37 @@ fails += not ok(all(set(res[tg]) >= {"t", "alvo", "girou", "erro", "ms", "yaw"} 
 tr, o = run(AUTO, ["--obst", 6000, 25, *TGT[-30], "--world-dps", 150], t_end=11000)
 tt = turns(o)
 fails += not ok(tt and tt[0]["girou"] is None and tt[0]["yaw"] == 0, f"(o) sem yaw: curva pelo tempo, girou = null: {tt[:1]}")
+
+# ===== (q) carro do diagnostico de 21/11: zona morta esq 128 / dir 140, reto a duty 137 = +175 graus/s, dir = ~310 =====
+CAR21 = ["--yaw", "--world-dps", 467, "--yaw-lag", 60, "--tau", 50, "--wheel-left", 1.0, 128, "--wheel-right", 1.0, 140]
+tr, o = run(ARMD + [(5000, dline("reto")), (8000, dline("dir"))], CAR21, t_end=11000)
+dd = {d["teste"]: d for d in diags(o)}
+fails += not ok(150 < dd["reto"]["rate_med"] < 200 and 270 < dd["dir"]["rate_med"] < 350,
+                f"(q) modelo reproduz o log de 21/11 (com a fiacao certa): reto {dd['reto']['rate_med']} graus/s, dir {dd['dir']['rate_med']}")
+def reto_corr_series(extra, n=4, pre=()):
+    inp, t = ARMD + list(pre), 5000
+    for _ in range(n):
+        inp.append((t, dline("reto_corr"))); t += 3000
+    tr, o = run(inp, CAR21 + extra, t_end=t)
+    res = []
+    for i in range(n):
+        w = [float(r["rate"]) for r in tr if 5000 + 3000 * i + 1000 <= r["t"] < 5000 + 3000 * i + 2000]
+        m = sum(w) / len(w)
+        res.append((round(m, 1), round((sum((x - m) ** 2 for x in w) / len(w)) ** .5, 1)))
+    return res
+old = reto_corr_series(["--set", "hold_kp", 0.01, "--set", "hold_ki", 0.05])
+fails += not ok(max(sd for _, sd in old) > 100, f"(q) controle: com os ganhos antigos (0,01/0,05) a correcao OSCILA: (media, desvio) {old}")
+new = reto_corr_series([])
+fails += not ok(all(sd < 15 for _, sd in new) and abs(new[0][0]) < 15 and all(abs(m) < 5 for m, _ in new[2:]),
+                f"(q) ganhos novos (0,0015/0,015, PWM 10 bits): estavel, 1o reto ja < 15 graus/s e < 5 a partir do 3o: {new}")
+tr, o = run(ARMD + [(5000, dline("roda_esq")), (9000, dline("roda_dir"))], CAR21, t_end=13000)
+dd = {d["teste"]: d for d in diags(o)}
+sug = suggest(dd["roda_esq"], dd["roda_dir"])
+cfg = json.dumps(dict(t="cfg", **sug), separators=(",", ":"))
+raw = reto_corr_series(["--set", "hold_kp", 0, "--set", "hold_ki", 0, "--set", "trim_rate", 0], n=1, pre=[(4500, cfg)])
+both = reto_corr_series([], n=2, pre=[(4500, cfg)])
+fails += not ok(abs(raw[0][0]) < 10 and all(abs(m) < 5 and sd < 10 for m, sd in both),
+                f"(q) com a faixa por roda sugerida {sug}: reto SEM correcao {raw[0][0]:+.1f} graus/s; com correcao {both}")
 
 # ===== Python <-> firmware =====
 from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink
