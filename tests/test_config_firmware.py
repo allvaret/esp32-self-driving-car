@@ -28,7 +28,7 @@ def test_control_config_matches_firmware_params():
         "vis_free_min": p["vis_free_min"], "suspect_s": p["suspect_ms"] / 1000, "yaw_lead_s": p["yaw_lead_ms"] / 1000,
         "hold_kp": p["hold_kp"], "hold_ki": p["hold_ki"], "hold_s_max": p["hold_s_max"], "hold_s_eps": p["hold_s_eps"],
         "hold_delay_s": p["hold_delay_ms"] / 1000, "hold_psi_max_deg": p["hold_psi_max"], "hold_pwm_max": p["hold_pwm_max"],
-        "trim_rate": p["trim_rate"], "trim_max": p["trim_max"],
+        "trim_rate": p["trim_rate"], "trim_max": p["trim_max"], "sensor_fresh_s": p["fresh_ms"] / 1000,
     }
     bad = {k: (getattr(c, k), v) for k, v in pairs.items() if abs(getattr(c, k) - v) > 1e-9}
     assert not bad, f"config.py x Params divergem (config, firmware): {bad}"

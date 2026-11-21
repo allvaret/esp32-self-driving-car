@@ -44,6 +44,7 @@ class ControlConfig:
     guard_max_episodes: int = 2   # a partir do (N+1)-esimo DESVIO na janela, espera em vez de manobrar
     guard_backoff_s: Tuple[float, ...] = (1.0, 2.0, 4.0)   # sobe a cada reentrada; reseta apos a janela
     # --- "sem eco" em 3 estados e opiniao do celular (firmware; ver docs/parametros_a_calibrar.md) ---
+    sensor_fresh_s: float = 0.4   # leitura central mais velha que isso nao vale (firmware fresh_ms; brain: refutar a visao)
     vis_fresh_s: float = 0.3      # vis mais velha que isso = sem opiniao
     yaw_fresh_s: float = 0.2      # yaw mais velho que isso = curva pelo tempo (turn_dps)
     vis_free_min: float = 50.0    # setor 0 da visao (0..100) a partir do qual "livre"; abaixo = bloqueado/suspeito
@@ -126,7 +127,7 @@ class Config:
         if c.scan_step_deg <= 0 or c.scan_deg < c.scan_step_deg or c.turn_dps <= 0:
             raise ValueError("control: scan_step_deg > 0, scan_deg >= scan_step_deg, turn_dps > 0")
         for n in ("stop_s", "reverse_s", "turn_s", "clear_s", "look_timeout_s", "guard_window_s",
-                  "vis_fresh_s", "yaw_fresh_s", "suspect_s", "yaw_lead_s"):
+                  "vis_fresh_s", "yaw_fresh_s", "suspect_s", "yaw_lead_s", "sensor_fresh_s"):
             if getattr(c, n) < 0:
                 raise ValueError(f"control.{n} nao pode ser negativo")
         for n in ("hold_kp", "hold_ki", "hold_s_max", "hold_s_eps", "hold_delay_s", "hold_psi_max_deg",

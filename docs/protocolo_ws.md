@@ -39,7 +39,7 @@ Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garant
 | `{"t":"vis","ok":1,"s":[100,100,90,100,40]}` | opiniao da visao: 5 setores livres 0..100 em -30,-15,0,+15,+30 graus. `ok:0` (calibrando/erro) ou mais velha que `vis_fresh_ms` (300) = sem opiniao. **So o modo phone usa** |
 | `{"t":"yaw","psi":-12.3,"r":-45.2}` | rumo acumulado (graus, + = direita, sem limite; so o delta importa) e giro (graus/s). Mais velho que `yaw_fresh_ms` (200) = sem yaw (curva pelo tempo, `turn_dps`) |
 | `{"t":"drive","v":0.3,"s":0}` | so no modo phone; vale por `wd_ms` (500). `s` > 0 = direita |
-| `{"t":"avoid","deg":-15}` | modo phone, armado: o ESP32 faz o desvio. `deg` (opcional) = angulo sugerido pela visao (setor mais livre): a varredura comeca por ele e ele so e aceito se o sensor nao vetar |
+| `{"t":"avoid","deg":-15}` | modo phone, armado: o ESP32 faz o desvio. `deg` (opcional) = angulo sugerido pela visao (setor mais livre): a varredura comeca por ele e ele so e aceito se o sensor nao vetar. **Recusado** se a leitura central e valida, fresca (`fresh_ms`) e `>= d_clear_cm` (visao refutada pelo sensor; log `avoid recusado: ...`). Se chega de novo durante a manobra/ESPERA, a ESPERA termina em manobra completa |
 | `{"t":"aim","deg":45}` | so no modo phone (bancada) |
 | `{"t":"mode","m":"auto"\|"phone"}` | troca o modo (idempotente: o mesmo modo nao reinicia nada) |
 | `{"t":"arm","on":true\|false}` | arma (4 s) / desarma (`false` = reset completo) |

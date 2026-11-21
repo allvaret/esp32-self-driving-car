@@ -23,6 +23,7 @@ import time
 import websocket  # websocket-client
 
 DEFAULT_URL = "ws://192.168.4.1:81/"
+CENTER_TOL_DEG = 10.0             # = CENTER_TOL_DEG do firmware: servo "olhando para frente"
 
 
 class WsLink:
@@ -31,6 +32,7 @@ class WsLink:
         self.on_msg = on_msg            # callback(dict) para cada mensagem recebida
         self.state = {}                 # ultimo {"t":"state"}
         self.ranges = {}                # deg -> (cm|None, t)
+        self.center = None              # ultima leitura central (|deg| <= 10): (cm|None, time.monotonic())
         self.goal = None                # ultima motivacao
         self.src = None                 # fonte do goal: "sensor" | "visao" (None se o visor nao mandou)
         self.conn_seq = 0               # +1 a cada (re)conexao aberta
@@ -80,6 +82,10 @@ class WsLink:
             self.state = m
         elif t == "range":
             self.ranges[m.get("deg")] = (m.get("cm"), time.time())
+            deg = m.get("deg")
+            if isinstance(deg, (int, float)) and abs(deg) <= CENTER_TOL_DEG:
+                cm = m.get("cm")
+                self.center = (float(cm) if isinstance(cm, (int, float)) else None, time.monotonic())
         elif t == "goal":
             self.goal = m.get("g")
             self.src = m.get("src")

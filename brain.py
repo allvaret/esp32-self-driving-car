@@ -50,6 +50,9 @@ SECTOR_DEGS = (-30, -15, 0, 15, 30)
 AVOID_DEGS = (-30, -15, 15, 30)   # o ESP32 varre estas posicoes (centro e o obstaculo)
 
 _STATES = ("LIVRE", "INCERTO", "OBSTACULO")
+_CC = Config().control
+D_CLEAR_CM = _CC.d_clear_m * 100      # leitura central valida >= isso refuta um OBSTACULO da visao (= d_clear_cm)
+SENSOR_FRESH_S = _CC.sensor_fresh_s   # idade maxima da leitura central (= fresh_ms do firmware)
 
 # ----------------------------------- estado ----------------------------------
 _clock = time.monotonic          # trocado nos testes
@@ -227,6 +230,15 @@ def _free_sector_deg(sectors):
     return best[1]
 
 
+def _refuting_cm(link, now):
+    """cm da leitura central VALIDA, fresca e >= D_CLEAR_CM (o sensor ve o caminho livre); senao None."""
+    c = getattr(link, "center", None)
+    if not c or c[0] is None:
+        return None
+    cm, t = c
+    return cm if cm >= D_CLEAR_CM and now - t <= SENSOR_FRESH_S else None
+
+
 def _resolve(link):
     """(goal, src) efetivos: so 'explorar' tem src; ausente -> 'sensor'."""
     goal = link.goal
@@ -275,14 +287,18 @@ def step(estado, conf=None, msg=None):
             _send({"t": "vis", "ok": 1 if use else 0, "s": sectors if use else [0, 0, 0, 0, 0]})
 
         v = s = 0.0
+        refuted = None
         if goal in GOALS_MOVE and src == "visao":
-            v = V_FREE if st == "LIVRE" else (V_SLOW if st == "INCERTO" else 0.0)
+            # OBSTACULO da visao com o sensor lendo o caminho livre (>= d_clear, valido e fresco): visao REFUTADA,
+            # anda devagar como INCERTO e nao pede desvio. Zona intermediaria ou perto: fluxo normal.
+            refuted = _refuting_cm(link, now) if st == "OBSTACULO" else None
+            v = V_FREE if st == "LIVRE" else (V_SLOW if st == "INCERTO" or refuted is not None else 0.0)
             s = 0.0                                # reta: o ESP32 corrige o rumo (hold_*), nao o celular
             link.drive(v, s)
             lg = _logger
             if lg is not None:
                 lg.sent({"t": "drive", "v": round(v, 3), "s": round(s, 3)})
-            if (st == "OBSTACULO" and armed and esp.get("st") != "DESVIO"
+            if (st == "OBSTACULO" and refuted is None and armed and esp.get("st") != "DESVIO"
                     and now - _last_avoid_t >= AVOID_EVERY_S):
                 _last_avoid_t = now
                 o = {"t": "avoid"}
@@ -296,11 +312,14 @@ def step(estado, conf=None, msg=None):
             if u:
                 _send({"t": "think", "viz": u})
 
-        # pensamento: SO a visao (estado, conf, setores)
-        if st != _last_state or now - _last_think_t >= THINK_MIN_S:
-            _last_state = st
+        # pensamento: SO a visao (estado, conf, setores) e, se for o caso, a refutacao pelo sensor
+        key_th = (st, refuted is not None)
+        if key_th != _last_state or now - _last_think_t >= THINK_MIN_S:
+            _last_state = key_th
             _last_think_t = now
-            o = {"t": "think", "msg": msg or _vision_text(st, sectors, p["ok"]), "state": st or "-"}
+            txt = msg or (f"visão refutada pelo sensor ({refuted:.0f} cm)" if refuted is not None
+                          else _vision_text(st, sectors, p["ok"]))
+            o = {"t": "think", "msg": txt, "state": st or "-"}
             if conf is not None:
                 try:
                     o["conf"] = round(float(conf), 2)

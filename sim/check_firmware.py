@@ -359,6 +359,26 @@ fails += not ok(all(json.loads(m) for t, m in o if m.startswith("{")), "(m) linh
 tr, o = run(ARMD + [(5000, '{"t":"trim","v":0.7}'), (5200, dline("zerar_trim"))], [], t_end=6000)
 fails += not ok(any('"zerar_trim"' in m for _, m in o) and float(at(tr, 5800)["trim"]) == 0, "(m) Zerar trim")
 
+# ===== (n) sensor refuta a visao; sem ciclo avoid -> ESPERA -> devolve -> avoid =====
+# "brain" simulado na fonte visao com OBSTACULO: drive v = 0 e avoid a cada 2 s; visao com o centro bloqueado
+def brain_obst(t0, t1, v=0.0):
+    return (drives(t0, t1, v) + vis(t0, t1, [100, 100, 0, 100, 100])
+            + [(t, '{"t":"avoid","deg":15}') for t in range(t0 + 500, t1, 2000)])
+tr, o = run(base + brain_obst(5000, 45000, 0.15), ["--ang", 0, 86], t_end=45000)
+refs = [m for _, m in o if "avoid recusado" in m]
+fails += not ok(not evs("PARADA") and not evs("ESPERA") and all(r["delegated"] == "0" for r in tr if r["t"] > 5000) and refs,
+                f"(n) visao OBSTACULO + 86 cm VALIDOS: nenhum avoid aceito, nenhuma manobra; log: {refs[:1]}")
+fails += not ok(float(at(tr, 30000)["curL"]) > 0.1, f"(n) refutada: segue andando devagar (v_slow do celular): {at(tr, 30000)['curL']}")
+tr, o = run(base + brain_obst(5000, 45000), ["--ang", 0, 45], t_end=45000)
+seq = [e["subn"] for e in LAST["ev"] if e["subn"] != "-"]
+after = [seq[i + 1] for i, s_ in enumerate(seq[:-1]) if s_ == "ESPERA"]
+fails += not ok(seq.count("ESPERA") <= 1 and all(a == "PARADA" for a in after) and seq.count("PARADA") >= 6,
+                f"(n) zona intermediaria (45 cm) + visao OBSTACULO persistente: {seq.count('ESPERA')} ESPERA e "
+                f"{seq.count('PARADA')} manobras em 40 s; depois da ESPERA: {after}")
+tr, o = run(base + brain_obst(5000, 20000), ["--ang", 0, 86, "--obst", 9000, 50], t_end=20000)
+fails += not ok(evs("PARADA") and min(e["t"] for e in evs("PARADA")) >= 9000,
+                "(n) a distancia cai para a zona intermediaria (50 cm): o avoid volta a valer (fluxo normal)")
+
 # ===== Python <-> firmware =====
 from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink
 link = MemoryLink(); head = LinkRangeHead(link, settle_s=0.15)

@@ -18,6 +18,7 @@ class FakeLink:
         self.sent, self.connected = [], True
         self.goal, self.src, self.state = "nenhuma", None, {"armed": False}
         self.calib_seq, self.conn_seq = 0, 1
+        self.center = None                         # (cm|None, t) como o WsLink
 
     def send(self, obj):
         self.sent.append(obj)
@@ -174,6 +175,42 @@ def test_drive_is_straight_no_heading_correction_in_brain():
     lk.state.update(hold=2, hc=-1.25, trim=-1.2)
     assert "corrigindo" in brain.status() and "trim=-1.20" in brain.status()
     print("ok  brain manda s = 0 em reta (o ESP32 corrige o rumo); status mostra hold/corr/trim do ESP32")
+
+
+def test_sensor_refutes_vision_obstacle():
+    obst = _info("OBSTACULO", sectors=(100, 100, 0, 100, 100))
+    lk, clk = _setup("explorar", "visao", armed=True)
+    lk.center = (86.0, clk.t)                      # leitura central VALIDA, fresca, >= d_clear (60)
+    for _ in range(30):                            # 3 s de OBSTACULO
+        brain.step(obst)
+        clk.adv(0.1)
+        lk.center = (86.0, clk.t)
+    assert not lk.of("avoid"), lk.of("avoid")
+    assert all(d["v"] == brain.V_SLOW for d in lk.of("drive"))
+    th = [m["msg"] for m in lk.of("think") if "refutada" in m.get("msg", "")]
+    assert th and th[0] == "visão refutada pelo sensor (86 cm)", th[:1]
+    for cm, age, why in ((45.0, 0.0, "zona intermediaria"), (25.0, 0.0, "perto"), (86.0, 1.0, "leitura velha"), (None, 0.0, "sem eco")):
+        lk, clk = _setup("explorar", "visao", armed=True)
+        lk.center = (cm, clk.t - age)
+        brain.step(obst)
+        assert lk.of("avoid") and lk.of("drive")[-1]["v"] == 0.0, why
+    lk, clk = _setup("explorar", "visao", armed=True)   # LIVRE com sensor longe: nada muda
+    lk.center = (86.0, clk.t)
+    brain.step(_info("LIVRE"))
+    assert lk.of("drive")[-1]["v"] == brain.V_FREE and not any("refutada" in m.get("msg", "") for m in lk.of("think"))
+    print("ok  OBSTACULO + 86 cm validos e frescos: visao refutada (sem avoid, v_slow, think); 45/25 cm, velha, sem eco: fluxo normal")
+
+
+def test_ws_link_tracks_center_reading():
+    from tools.ws_link import WsLink
+    lk = WsLink()
+    lk._on_message(None, '{"t":"range","deg":-30.0,"cm":20.0}')
+    assert lk.center is None
+    lk._on_message(None, '{"t":"range","deg":0.0,"cm":86.4}')
+    assert lk.center[0] == 86.4
+    lk._on_message(None, '{"t":"range","deg":5.0,"cm":null}')
+    assert lk.center[0] is None
+    print("ok  WsLink guarda a leitura central (|deg| <= 10) com relogio monotonico")
 
 
 def test_src_sensor_sends_vis_but_no_drive():

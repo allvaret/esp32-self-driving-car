@@ -185,6 +185,9 @@ static bool delegated = false;             // phone: ESP32 no comando (sem celul
 static bool avoidReq = false;              // phone: celular pediu desvio
 static bool avoidHintOk = false;           // ... com angulo sugerido
 static float avoidHintDeg = 0;
+static bool avoidFromPhone = false;        // o DESVIO atual veio de um avoid do celular (visao)
+static bool avoidAgain = false;            // ... e o celular pediu de novo enquanto o ESP32 manobrava/esperava
+static uint32_t tRefuteLog = 0;
 
 static float curL = 0, curR = 0;           // saida da roda ESQUERDA / DIREITA (rampa + correcao de rumo)
 static float rampL = 0, rampR = 0;         // comando base (v, s) depois da rampa, sem a correcao de rumo
@@ -492,6 +495,11 @@ static float noEchoScore(float deg, uint32_t now) {      // nota de uma posicao 
   return P.none_score_cm;
 }
 
+// leitura central VALIDA, fresca e >= d_clear_cm: o sensor ve o caminho livre e REFUTA um "obstaculo" da visao
+static bool sensorRefutes(uint32_t now) {
+  return haveC && (int32_t)(now - centerT) <= (int32_t)P.fresh_ms && centerCm >= P.d_clear_cm;
+}
+
 static bool forwardAllowed(uint32_t now) {
   if (!haveC || (int32_t)(now - centerT) > (int32_t)P.fresh_ms) return false;  // sem leitura fresca: nao anda
   int c = centerClass(now);
@@ -656,6 +664,7 @@ static void guardDecay(uint32_t now) {                   // o historico da guard
 static void resetAuto(uint32_t now) {
   cst = C_FRENTE; sub = S_NONE; clearActive = false; avoidN = 0; guardLevel = 0; tries = 0;
   gone = true; waitedAfter = false; noRevFlag = false; hintOk = false; hintFirst = false; haveAng = false;
+  avoidFromPhone = false; avoidAgain = false;
   setWhy("");
   aimTo(0, now);
 }
@@ -665,7 +674,7 @@ static void resetAuto(uint32_t now) {
 static void enterAvoid(uint32_t now, const char* reason, bool noRev, bool force) {
   pruneAvoid(now);
   if (avoidN == 0) guardLevel = 0;
-  cst = C_DESVIO; tries = 0; noRevFlag = noRev; haveAng = false;
+  cst = C_DESVIO; tries = 0; noRevFlag = noRev; haveAng = false; avoidAgain = false;
   bool wait = !force && avoidN >= (int)P.guard_max && !(waitedAfter && !gone);
   gone = false;
   if (wait) {                                            // reentrada: espera com backoff
@@ -774,7 +783,11 @@ static void autoStep(uint32_t now, float* v, float* s) {
     case S_ESPERA:
       if ((int32_t)(now - waitUntil) >= 0) {
         int cls = centerClass(now);
-        if ((cls == R_VALID && centerCm < P.d_stop_cm) || cls == R_SUSPECT) {   // obstaculo segue la: manobra COMPLETA
+        // a condicao que levou ao desvio persiste? sensor perto/suspeito, ou (desvio pedido pelo celular) a visao
+        // segue vendo o centro bloqueado / o celular pediu de novo durante a espera, sem o sensor refutar.
+        bool phonePersist = avoidFromPhone && !sensorRefutes(now) &&
+                            (avoidAgain || (visUsable(now) && visS[2] < (int)P.vis_free_min));
+        if ((cls == R_VALID && centerCm < P.d_stop_cm) || cls == R_SUSPECT || phonePersist) {   // manobra COMPLETA
           waitedAfter = true;
           enterAvoid(now, "fim da espera: obstaculo segue", false, true);
         } else { cst = C_VARREDURA; sub = S_NONE; clearActive = false; setWhy("fim da espera"); *v = P.v_slow; }
@@ -843,13 +856,20 @@ static void phoneStep(uint32_t now, float* v, float* s) {
   bool fresh = now - lastDriveT <= (uint32_t)P.wd_ms;
   if (avoidReq) {                                          // celular pediu desvio (com angulo sugerido, se veio)
     avoidReq = false;
-    if (!delegated || cst != C_DESVIO) {
+    if (sensorRefutes(now)) {                              // visao refutada: sensor le o caminho livre (>= d_clear)
+      snprintf(why, sizeof(why), "visao refutada pelo sensor (%.0f cm)", centerCm);
+      if (now - tRefuteLog >= 1000) {
+        tRefuteLog = now;
+        emitf("{\"t\":\"log\",\"msg\":\"avoid recusado: visao refutada pelo sensor (%.0f cm)\"}", centerCm);
+      }
+    } else if (!delegated || cst != C_DESVIO) {
       delegated = true;
       cst = C_FRENTE; sub = S_NONE;
       hintOk = avoidHintOk; hintDeg = avoidHintDeg;
       enterAvoid(now, "celular: obstaculo", false, false);
+      avoidFromPhone = true;
       emitf("{\"t\":\"log\",\"msg\":\"ESP32 assumiu: desvio pedido\"}");
-    }
+    } else avoidAgain = true;                              // pediu de novo durante a manobra/ESPERA
   }
   if (delegated) {
     if (cst == C_DESVIO) { autoStep(now, v, s); return; }   // termina a manobra antes de devolver
@@ -868,11 +888,18 @@ static void phoneStep(uint32_t now, float* v, float* s) {
     } else { *v = 0; *s = 0; }
     return;
   }
+  if (haveC && (int32_t)(now - centerT) <= (int32_t)P.fresh_ms) {
+    int cls = centerClass(now);
+    // caminho livre (sensor >= d_clear, ou sem eco com a visao livre): o obstaculo do ultimo desvio "sumiu"
+    if ((cls == R_VALID && centerCm >= P.d_clear_cm) || (cls == R_FREE && visUsable(now) && visS[2] >= (int)P.vis_free_min)) {
+      gone = true; waitedAfter = false;
+    }
+  }
   if (cmdV > 0.02f && haveC && (int32_t)(now - centerT) <= (int32_t)P.fresh_ms) {   // VETO do sensor (mediana, nao o bruto)
     int cls = centerClass(now);
     bool near = cls == R_VALID && centerCm < P.d_stop_cm;
     if (near || cls == R_SUSPECT) {
-      delegated = true; cst = C_FRENTE; sub = S_NONE; hintOk = false;
+      delegated = true; cst = C_FRENTE; sub = S_NONE; hintOk = false; avoidFromPhone = false;
       enterAvoid(now, near ? "veto: sensor perto" : "veto: sem eco suspeito", !near, false);
       emitf("{\"t\":\"log\",\"msg\":\"ESP32 assumiu: veto do sensor\"}");
       autoStep(now, v, s);
