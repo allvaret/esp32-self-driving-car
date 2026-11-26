@@ -2,6 +2,8 @@
 
 O Kotlin chama StreamRunner.process_rgba_frame() por frame e recebe JSON (string) com a OPINIAO
 da visao (vision_state, r, setores...). Quem age e o ESP32; o brain.py so repassa a opiniao.
+Tambem por frame: o indice de movimento da camera ("mov", vision/motion.py; o brain repassa ao ESP32 para detectar
+BATIDA) e o quadro original vai para o video da corrida (tools/video_log.py; "vf" = indice dele no video, ou None).
 Este modulo NAO importa control.controller nem control.mocks (ver tests/test_live_path.py).
 O loop offline com Controller/mocks esta em replay/offline.py.
 """
@@ -17,6 +19,8 @@ from vision import edge_probe
 from vision.coverage_log import WARMUP, coverage_row, floor_prob
 from vision.decision import DecisionMaker
 from vision.ground import calibrate_thr, floor_mask, free_sectors, free_space_vector, learn_floor_hist
+from vision.motion import MotionMeter
+from tools import video_log
 import viz
 
 
@@ -107,7 +111,7 @@ class VisionRunner:
 
 
 LOG_FIELDS = ["wall_s", "t", "n", "phase", "ok", "vision_state", "r", "sectors", "edge_h_cen", "edge_cov",
-              "edge_near", "why", "conv_ms", "proc_ms", "w", "h", "rot"]
+              "edge_near", "why", "conv_ms", "proc_ms", "w", "h", "rot", "mov", "vf"]
 
 
 def _jsonable(o):
@@ -128,6 +132,8 @@ class StreamRunner:
         self.settle_s = float(settle_s)
         self._log_f = self._log_w = None
         self._rows = 0
+        self.motion = MotionMeter(self.cfg.motion.dt_s, self.cfg.motion.width)   # nao zera no recalibrate
+        video_log.configure(self.cfg.record)
         if log_path:
             self._log_f = open(str(log_path), "w", newline="")
             self._log_w = csv.DictWriter(self._log_f, LOG_FIELDS, extrasaction="ignore", restval="")
@@ -145,12 +151,15 @@ class StreamRunner:
             t0 = time.perf_counter()
             frame = frame_from_rgba(data, width, height, row_stride, rotation)
             conv_ms = (time.perf_counter() - t0) * 1000
+            vf = video_log.push(frame)                     # so poe na fila (o JPEG e na thread do gravador)
+            mov = self.motion.update(frame, time.monotonic())
             if time.monotonic() - self._t_start < self.settle_s:   # auto-exposicao estabilizando
                 info = {"phase": "SETTLE", "ok": False, "vision_state": "-", "r": None, "sectors": None,
                         "why": "estabilizando exposicao", "proc_ms": 0.0}
             else:
                 info = self.runner.feed(frame)
-            info.update({"conv_ms": conv_ms, "w": frame.shape[1], "h": frame.shape[0],
+            info.update({"conv_ms": conv_ms, "w": frame.shape[1], "h": frame.shape[0], "vf": vf,
+                         "mov": None if mov is None else round(mov, 2),
                          "rot": int(rotation), "wall_s": round(time.monotonic() - self._t_start, 3)})
             self._log(info)
             return json.dumps(info, default=_jsonable)

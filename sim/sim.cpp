@@ -83,6 +83,29 @@ static float simCm(float deg, uint32_t ms) {
   return cm;
 }
 
+// ---- BATIDA e camera do celular (0.7.0) ----
+// --bump T DEG: aos T ms o carro encosta num obstaculo que o SONAR NAO VE (objeto baixo). Enquanto o rumo fisico estiver a
+// menos de DEG graus do rumo da batida, andar para a frente nao avanca: a folga ate ele (gap) cresce com a re e cai com a
+// frente (30 cm/s por unidade de roda); com gap 0 a frente fica presa. Girar DEG ou mais = obstaculo fora do caminho.
+// --cam: injeta {"t":"vis","ok":0,...,"m":M} a cada 100 ms, M = movimento FISICO da imagem (0,8 parado/preso + 25 x
+// avanco real + 0,15 x |giro|). --cam-noise X troca o 0,8 do parado (vibracao com as rodas patinando).
+static float W_bumpT = 1e12, W_bumpDeg = 0, W_camNoise = 0.8f;
+static bool W_cam = false, W_bumpHave = false, W_bumpGone = false;
+static double W_bumpPsi = 0, W_gap = 0;
+static int W_bumps = 0;                    // vezes que o carro ficou preso (gap chegou a 0 com a frente empurrando)
+static bool W_stuck = false;
+static float physFwd(double dt, uint32_t ms) {          // avanco REAL (normalizado) depois do obstaculo
+  float u = (W_uL + W_uR) * 0.5f;
+  if (ms < W_bumpT || W_bumpGone) return u;
+  if (!W_bumpHave) { W_bumpHave = true; W_bumpPsi = W_psi; W_gap = 0; }
+  if (std::fabs(W_psi - W_bumpPsi) >= W_bumpDeg) { W_bumpGone = true; return u; }
+  W_gap -= u * 30.0 * dt;
+  if (W_gap > 0) { W_stuck = false; return u; }
+  W_gap = 0;
+  if (u > 0.02f && !W_stuck) { W_stuck = true; W_bumps++; }
+  return u > 0 ? 0.0f : u;
+}
+
 void pinMode(int, int) {}
 void digitalWrite(int p, int v) { g_pin[p] = v; }
 int digitalRead(int p) { return p == PIN_BTN ? g_btn : g_pin[p]; }
@@ -168,6 +191,9 @@ int main(int argc, char** argv) {
     else if (a == "--nopwm-left") W_noPwmL = true;
     else if (a == "--servo-dead") W_servoDead = true;
     else if (a == "--servo-nopwm") W_servoNoPwm = true;
+    else if (a == "--cam") W_cam = true;
+    else if (a == "--cam-noise") f(W_camNoise);
+    else if (a == "--bump") { f(W_bumpT); f(W_bumpDeg); }      // NAO liga a --cam (sem o celular nao ha deteccao)
     else if (a == "--ws") g_ws_clients = atoi(argv[++i]);
     else if (a == "--input") inFile = argv[++i];
     else if (a == "--set") { std::string k = argv[++i]; float v = (float)atof(argv[++i]);
@@ -178,7 +204,7 @@ int main(int argc, char** argv) {
     while (std::getline(fi, line)) { size_t tab = line.find('\t'); if (tab == std::string::npos) continue;
       script.push_back({(uint32_t)atoi(line.substr(0, tab).c_str()), line.substr(tab + 1)}); } }
   std::deque<std::pair<uint32_t, std::string>> yawQ;
-  size_t si = 0; uint32_t next_tr = 0, next_yaw = 0; int pc = -1, ps = -1, pa = -1; uint64_t last_us = 0;
+  size_t si = 0; uint32_t next_tr = 0, next_yaw = 0, next_cam = 0; float fwdNow = 0; int pc = -1, ps = -1, pa = -1; uint64_t last_us = 0;
   setup();
   while (millis() < t_end) {
     uint32_t ms = millis();
@@ -196,6 +222,12 @@ int main(int argc, char** argv) {
     double cmdRate = W_dps * (double)(W_uL - W_uR) / 1.2;  // + = direita (roda esquerda mais rapida)
     W_rate = W_tau > 0 ? W_rate + (cmdRate - W_rate) * (dt * 1000.0) / (W_tau + dt * 1000.0) : cmdRate;
     W_psi += W_rate * dt;
+    fwdNow = physFwd(dt, millis());
+    if (W_cam && millis() >= next_cam) { next_cam = millis() + 100;
+      char b[96]; snprintf(b, sizeof b, "{\"t\":\"vis\",\"ok\":0,\"s\":[0,0,0,0,0],\"m\":%.1f}",
+                           W_camNoise + 25.0f * std::fabs(fwdNow) + 0.15f * std::fabs((float)W_rate));
+      for (char c : std::string(b)) g_in.push_back(c);
+      g_in.push_back('\n'); }
     if (W_yaw && millis() >= next_yaw) { next_yaw = millis() + 50;
       char b[96]; snprintf(b, sizeof b, "{\"t\":\"yaw\",\"psi\":%.2f,\"r\":%.2f}", W_psi, W_rate);
       yawQ.push_back({millis() + (uint32_t)W_lag, b}); }
@@ -205,11 +237,11 @@ int main(int argc, char** argv) {
     if (cst != pc || sub != ps || (int)armed != pa) { printf("EV %u cst=%d sub=%d subn=%s armed=%d psi=%.2f why=%s\n", millis(), cst, sub, SUBN[sub], armed, W_psi, why); pc = cst; ps = sub; pa = armed; }
     if (millis() >= next_tr) { next_tr = millis() + 100;
       printf("TR %u armed=%d mode=%d cst=%d sub=%d subn=%s curL=%.3f curR=%.3f servo=%.1f phys=%.1f center=%.1f cls=%d delegated=%d psi=%.1f "
-             "enaPWM=%.0f enbPWM=%.0f in1=%d in2=%d in3=%d in4=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f hold=%d hc=%.3f trim=%.3f cred=%.3f esc=%d\n",
+             "enaPWM=%.0f enbPWM=%.0f in1=%d in2=%d in3=%d in4=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f hold=%d hc=%.3f trim=%.3f cred=%.3f esc=%d fwd=%.3f bumps=%d stl=%d bat=%d\n",
              millis(), armed, mode, cst, sub, SUBN[sub], curL, curR, servoDeg, physServoDeg(), centerCm, haveC ? centerClass(millis()) : -1, (int)delegated, W_psi,
              duty8(PIN_ENA), duty8(PIN_ENB),
              g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4],
-             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate, holdMode, holdCorr, holdTrim, credRevMs(millis()) / 1000.0f, escN); }
+             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate, holdMode, holdCorr, holdTrim, credRevMs(millis()) / 1000.0f, escN, fwdNow, W_bumps, (int)stallWatch, stallN); }
   }
   for (auto& kv : g_nvs) printf("NVS %s=%.4f\n", kv.first.c_str(), kv.second);
   printf("NVSW %d\n", g_nvs_writes);

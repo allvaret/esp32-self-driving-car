@@ -45,8 +45,9 @@ def test_one_file_per_goal_and_everything_is_logged():
     lg.recv({"t": "goal", "g": "explorar", "src": "sensor"})     # 2o arquivo (outro goal/src)
     lg.recv({"t": "state", "armed": True})
     lg.close()
-    files = sorted(n for n, _ in list_logs(d))
-    assert len(files) == 2 and files[0].startswith("explorar_sensor_") and files[1].startswith("explorar_visao_"), files
+    files = sorted((n for n, _ in list_logs(d)), key=lambda n: n.endswith("_visao.jsonl"))   # [sensor, visao]
+    assert len(files) == 2 and all(f.startswith("corrida_") for f in files), files
+    assert files[0].endswith("_sensor.jsonl") and files[1].endswith("_visao.jsonl"), files
     a = _lines(os.path.join(d, files[1]))
     kinds = [(r["k"], (r.get("m") or {}).get("t")) for r in a]
     for want in (("tx", "vis"), ("tx", "drive"), ("tx", "yaw"), ("tx", "avoid"), ("f", None), ("rx", "state"), ("rx", "range"),
@@ -117,3 +118,12 @@ def test_viz_routes_list_and_download_logs():
         viz.set_log_dir(None)
     assert safe_path(d, "../x.jsonl") is None and safe_path(d, ".oculto.jsonl") is None
     print("ok  viz: /logs lista, /log/<nome> baixa; so .jsonl da pasta (traversal -> 404)")
+
+
+def test_run_name_is_readable_and_sorts_by_time():
+    from tools.flight_log import run_name
+    t = time.mktime((2026, 11, 26, 13, 1, 18, 0, 0, -1))
+    assert run_name("explorar", "sensor", t) == "corrida_2026-11-26_13h01m18_sensor"
+    assert run_name("explorar", None, t) == "corrida_2026-11-26_13h01m18_sensor"
+    assert run_name("seguir", "visao", t) == "corrida_2026-11-26_13h01m18_visao_seguir"
+    assert run_name("explorar", "visao", t + 3600) > run_name("explorar", "sensor", t)

@@ -97,7 +97,8 @@ function handle(m){
     const fonte=m.src==='visao'?'VISAO':'SENSOR';
     $('st').textContent=fonte+' | '+(m.mode==='auto'?(m.st+(m.sub?' / '+m.sub:'')):
       (m.esp?'ESP32 no comando: '+m.st+(m.sub?' / '+m.sub:''):'celular dirige'));
-    $('src').textContent='fonte: '+(m.src||'-')+(m.vis?' (visao ok)':'')+(m.yaw?' | giro ok':'');
+    $('src').textContent='fonte: '+(m.src||'-')+(m.vis?' (visao ok)':'')+(m.yaw?' | giro ok':'')+
+      ' | camera: '+(m.mov==null||m.mov<0?'sem movimento medido':'mov '+m.mov.toFixed(1))+(m.stl?' | parado empurrando '+m.stl+' ms':'')+(m.bat?' | batidas: '+m.bat:'');
     $('ang').textContent='angulo: '+(m.ang==null?'-':m.ang+'°');
     if(m.up!=null){if(lastUp!=null&&m.up<lastUp)addLog('ESP32 REINICIOU (queda de energia?)','var(--er)');lastUp=m.up;
       $('up').textContent='ligado ha '+m.up+' s'+(m.rst?' | ultimo reset: '+m.rst:'')+(m.rest?' | retomadas: '+m.rest:'');}

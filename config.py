@@ -43,6 +43,14 @@ class ControlConfig:
     cred_min_s: float = 0.15      # credito menor que isso (em s de re a v_rev): gira direto, sem re
     escape_deg: float = 90.0      # sem saida: gira isso para fora do cone varrido, sempre para o mesmo lado
     escape_max: int = 4           # fugas seguidas sem andar livre antes do PRESO
+    # --- BATIDA (firmware 0.7.0): rodas empurrando em reta e nada se mexe por stall_s -> para, re e desvia ---
+    stall_s: float = 1.5          # tempo empurrando sem movimento ate declarar batida
+    stall_cam_max: float = 3.0    # indice da camera (vision/motion.py) abaixo disso = imagem parada [DEMO: calibrar no campo]
+    stall_yaw_dps: float = 20.0   # giro acima disso = o carro esta se mexendo (nao e batida)
+    stall_sonar_cm: float = 8.0   # sonar central mudando isso desde o inicio da janela = se mexendo
+    stall_rev_s: float = 0.5      # re minima depois da batida (cega e curta: o carro acabou de vir de tras)
+    stall_turn_deg: float = 45.0  # curva minima depois da batida, x batidas seguidas (ate escape_deg)
+    stall_free_s: float = 3.0     # andando COM movimento por isso: zera a contagem de batidas seguidas
     turn_slow_deg: float = 25.0   # curva com yaw: faltando menos que isso, o giro cai proporcional ao erro...
     turn_k_min: float = 0.35      # ... ate no minimo esta fracao (v_turn e s), para nao parar antes do alvo
     # --- histerese (s) ---
@@ -121,6 +129,28 @@ class HeadingConfig:
 
 
 @dataclass
+class MotionConfig:
+    """Indice de movimento da camera (vision/motion.py), mandado ao ESP32 no vis ("m") para detectar batida."""
+    dt_s: float = 0.3             # compara o quadro atual com o de dt_s atras
+    width: int = 64               # largura da miniatura (px)
+
+
+@dataclass
+class RecordConfig:
+    """Video da corrida no celular (tools/video_log.py): MJPEG cru (JPEGs em sequencia) + indice CSV, um por corrida,
+    com o mesmo nome do JSONL do brain. Thread propria, fila curta que DESCARTA quando enche (nunca atrasa a visao)."""
+    enabled: bool = True
+    fps: float = 10.0             # no maximo isso de quadros por segundo no video (o resto e pulado)
+    jpeg_q: int = 80              # qualidade JPEG (0..100): 80 ~ 35 KB por quadro 640x360
+    max_s: float = 900.0          # teto de duracao por corrida (s): passou, para de gravar (a corrida segue)
+    max_mb: float = 400.0         # teto de tamanho por corrida (MB)
+    keep_n: int = 10              # rotacao: mantem os N videos mais novos...
+    keep_mb: float = 1500.0       # ... e no maximo isso no total (MB); os mais velhos saem primeiro
+    queue_max: int = 4            # quadros crus esperando o JPEG (4 x 640x360x3 = ~2,8 MB no maximo)
+    annotated: bool = False       # grava tambem <nome>_visor.mjpg com o painel do visor (mascara, a ~5 fps)
+
+
+@dataclass
 class CarCalib:
     """Medidas do carro real. None = ainda nao medido."""
     speed_at_v_rev_mps: Optional[float] = None    # m/s medido com v = control.v_rev, em linha reta
@@ -132,6 +162,8 @@ class Config:
     control: ControlConfig = field(default_factory=ControlConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     heading: HeadingConfig = field(default_factory=HeadingConfig)
+    motion: MotionConfig = field(default_factory=MotionConfig)
+    record: RecordConfig = field(default_factory=RecordConfig)
     calib: CarCalib = field(default_factory=CarCalib)
 
     def validate(self):
@@ -168,13 +200,21 @@ class Config:
         for n in ("engage_delay_s", "stale_s", "rate_tau_s", "max_dt_s", "bias_still_s", "bias_tau_s"):
             if getattr(h, n) <= 0:
                 raise ValueError(f"heading.{n} deve ser > 0")
+        for n in ("stall_s", "stall_cam_max", "stall_yaw_dps", "stall_sonar_cm", "stall_rev_s", "stall_turn_deg", "stall_free_s"):
+            if getattr(c, n) < 0:
+                raise ValueError(f"control.{n} nao pode ser negativo")
+        if self.motion.dt_s <= 0 or self.motion.width < 8:
+            raise ValueError("motion: dt_s > 0 e width >= 8")
+        r = self.record
+        if r.fps <= 0 or not 1 <= r.jpeg_q <= 100 or min(r.max_s, r.max_mb, r.keep_mb) <= 0 or r.keep_n < 1 or r.queue_max < 1:
+            raise ValueError("record: fps > 0, jpeg_q 1..100, max_s/max_mb/keep_mb > 0, keep_n >= 1, queue_max >= 1")
         return self
 
     # ---- JSON ----
     @classmethod
     def from_dict(cls, data):
         sections = {"control": ControlConfig, "decision": DecisionConfig,
-                    "heading": HeadingConfig, "calib": CarCalib}
+                    "heading": HeadingConfig, "motion": MotionConfig, "record": RecordConfig, "calib": CarCalib}
         extra = set(data) - set(sections)
         if extra:
             raise ValueError(f"secoes desconhecidas: {sorted(extra)}")

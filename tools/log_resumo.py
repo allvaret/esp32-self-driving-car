@@ -1,6 +1,6 @@
-"""log_resumo.py - resume um log de voo do S9 (explorar_*.jsonl).
+"""log_resumo.py - resume um log de voo do S9 (corrida_*.jsonl; antes da 0.7.0 explorar_*.jsonl).
 
-Uso:  python tools/log_resumo.py explorar_visao_20261120_133209.jsonl [--giro]
+Uso:  python tools/log_resumo.py docs/logs/corrida_2026-11-26_13h01m18_sensor.jsonl [--giro]
 
 Mostra, em segundos desde o inicio do arquivo:
   - mudancas de estado da VISAO (vis ...)

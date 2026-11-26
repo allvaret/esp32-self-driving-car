@@ -1,6 +1,8 @@
 # Como ler o log do carrinho
 
-O S9 grava um arquivo por corrida: `explorar_<fonte>_<data>_<hora>.jsonl`.
+O S9 grava um arquivo por corrida: `corrida_<data>_<hora>_<fonte>.jsonl`, ex.: `corrida_2026-11-26_13h01m18_sensor.jsonl`
+(até a 0.7.0 era `explorar_<fonte>_<data>_<hora>.jsonl`). Desde a 0.7.0, junto com ele e com o
+mesmo nome, o **vídeo** da câmera (ver "Vídeo da corrida" no fim).
 Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** é a hora em que foi gravado
 (milissegundos desde 1970; subtraia o primeiro `w` para ter "segundos desde o início").
 
@@ -34,6 +36,8 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 | `g`, `src` | motivação (`explorar`) e fonte escolhida (`sensor` ou `visao`) |
 | `v`, `s` | velocidade (0–1) e curva que o celular pediu. Desde o firmware 0.5 o `s` é sempre 0 (quem corrige o rumo é o ESP32) |
 | `ms` | tempo para processar o quadro (bom: < 33 ms) |
+| `mov` | movimento da câmera (0.7.0): diferença média da imagem em 0,3 s. Parado ~1, andando ~5–40. É o `m` que vai ao ESP32 no `vis`; abaixo de `stall_cam_max` (3) com as rodas empurrando = batida. **Use para calibrar o limiar**: compare `mov` com o carro parado, andando e preso |
+| `vf` | número do quadro no vídeo da corrida (`null` = este quadro não foi gravado: o vídeo grava até 10 por segundo) |
 
 ## `tx`: o que o S9 envia
 
@@ -68,6 +72,9 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 | `trim` | trim aprendido (persiste entre trechos e na NVS). Deve mudar pouco de uma corrida para a outra |
 | `cred` | credito de re: quantos segundos de re (a `v_rev`) o caminho ja percorrido em reta garante (0.6.0). Cresce andando reto, cai na re, zera depois de girar muito |
 | `esc` | fugas seguidas (sem saida -> giro de 90 graus); volta a 0 quando o carro anda livre de novo. Em `escape_max` (4) = PRESO |
+| `mov` | último movimento da câmera que chegou (0.7.0); `-1` = sem câmera fresca, **sem detecção de batida** |
+| `stl` | há quantos ms as rodas empurram sem nada se mexer (0 = andando normal). Chega a `stall_ms` (1500) = batida |
+| `bat` | batidas seguidas; o desvio da batida gira pelo menos 45° × `bat` (até 90°) |
 | `why` | motivo da decisão atual (ex.: "visao refutada pelo sensor (86 cm)") |
 | `up` | segundos desde que o ESP ligou (se diminuir, ele reiniciou) |
 | `rst` | motivo do último reinício: `LIGOU` normal, `WDT` travou e o watchdog reiniciou, `BROWNOUT` queda de tensão |
@@ -134,3 +141,31 @@ use o `rate_med` nesses logs.
 4. **As curvas acertaram?** Siga os `turn`: `erro` pequeno e sem viés de sinal.
 
 Atalho: `python tools/log_resumo.py <arquivo> --giro` monta a linha do tempo.
+
+---
+
+## Vídeo da corrida (0.7.0)
+
+Para cada `corrida_*.jsonl`, a mesma pasta tem (mesmo nome, só muda o fim):
+
+| Arquivo | O que é |
+|---|---|
+| `<nome>.mjpg` | vídeo: o quadro **original** da câmera (já em pé, na resolução da visão), até 10 por segundo, em JPEG (qualidade 80). São JPEGs completos em sequência (MJPEG cru): se o app cair, tudo até ali continua legível |
+| `<nome>_indice.csv` | índice: `quadro,w,t_s,offset,bytes`. `quadro` = o `vf` do registro `f`; `w` = mesma hora do JSONL (ms); `t_s` = segundos desde o início do vídeo. Uma linha `# cheio` = bateu o teto (400 MB ou 15 min) e parou de gravar |
+| `<nome>_visor.mjpg` | (só com `record.annotated = True`) o painel do visor (imagem + máscara do chão), ~5 por segundo |
+
+**Baixar**: página `/logs` do celular (o visor mostra o link; rede CARRINHO). Cada corrida aparece com log, vídeo e índice
+e o tamanho de cada um; **assistir** toca o vídeo no navegador, no ritmo gravado.
+**Assistir no PC**: o VLC abre o `.mjpg` direto (mas na taxa padrão dele). Para a taxa certa e para o replay:
+
+```bash
+python -m tools.video_to_mp4 docs/logs                                              # converte TODAS as corridas novas da pasta
+python -m tools.video_to_mp4 docs/logs/corrida_2026-11-26_13h01m18_sensor.jsonl   # ou uma só (aceita o .jsonl, o .mjpg ou o nome)
+python -m replay.replay_main docs/logs/corrida_2026-11-26_13h01m18_sensor.mp4 --out run_x
+```
+
+**Achar um instante do log no vídeo**: o registro `f` com `"vf": 123` é o quadro 123 do vídeo (linha `123,...` do CSV).
+Para um evento do ESP32 (`rx`), pegue o `w` dele e procure no CSV o `w` mais próximo. Na saída do `video_to_mp4` o
+quadro do instante `t_s` fica em `t_s` segundos (taxa constante).
+O registro `{"k":"info","video":{...}}` no fim do JSONL diz quantos quadros foram gravados e se o teto foi atingido.
+

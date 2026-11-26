@@ -7,9 +7,14 @@ Registros (uma linha JSON cada; w = relogio de parede em ms):
 Nada e transmitido durante a corrida: os arquivos ficam em <filesDir>/logs e sao baixados depois pelo
 visor (viz.py: /logs e /log/<nome>, na rede CARRINHO).
 
+Nome: corrida_<data>_<hora>_<fonte>.jsonl (run_name), ex.: corrida_2026-11-26_13h01m18_sensor.jsonl (ate a 0.7.0:
+explorar_<fonte>_<data>_<hora>.jsonl).
 Um arquivo por goal: abre quando chega {"t":"goal","g":"explorar","src":..} (ou muda goal/src) e fecha em
 "parar". Sem arquivo aberto nada e gravado (o carro parado nao enche o armazenamento).
 Escrita: fila + thread propria; flush a cada FLUSH_S (1 s); nunca bloqueia o laco da camera.
+Video (tools/video_log.py): com `video`, o arquivo de video da corrida abre e fecha JUNTO com o JSONL e tem o mesmo
+nome (<nome>.mjpg + <nome>_indice.csv). O registro "f" leva "vf" = indice do quadro gravado no video (quando foi gravado)
+e "mov" = indice de movimento da camera (vision/motion.py, o mesmo "m" do vis ao ESP32).
 """
 import json
 import os
@@ -26,9 +31,19 @@ def _wall_ms():
     return int(time.time() * 1000)
 
 
+def run_name(goal, src, t=None):
+    """Nome base da corrida: corrida_<data>_<hora>_<fonte> (ex.: corrida_2026-11-26_13h01m18_sensor). Data primeiro =
+    a ordem alfabetica e a ordem das corridas. Todos os arquivos da corrida usam este nome: .jsonl (log), .mjpg
+    (video), _indice.csv (indice do video), _visor.mjpg (painel anotado). Goal diferente de explorar vai no fim."""
+    stamp = time.strftime("%Y-%m-%d_%Hh%Mm%S", time.localtime(t))
+    name = f"corrida_{stamp}_{src or 'sensor'}"
+    return name if goal in (None, "", "explorar") else f"{name}_{goal}"
+
+
 class FlightLog:
-    def __init__(self, directory):
+    def __init__(self, directory, video=None):
         self.dir = str(directory)
+        self.video = video            # tools.video_log.VideoLog (ou None: so o JSONL)
         os.makedirs(self.dir, exist_ok=True)
         self._q = queue.Queue(maxsize=QUEUE_MAX)
         self._thread = None
@@ -53,7 +68,7 @@ class FlightLog:
                    "r": raw.get("r"), "sec": p.get("sectors"), "ok": 1 if p.get("ok") else 0,
                    "e": {"h": raw.get("edge_h_cen"), "c": raw.get("edge_cov"), "n": 1 if raw.get("edge_near") else 0},
                    "ph": raw.get("phase"), "g": goal, "src": src, "v": round(v, 3), "s": round(s, 3),
-                   "ms": raw.get("proc_ms")})
+                   "ms": raw.get("proc_ms"), "mov": raw.get("mov"), "vf": raw.get("vf")})
 
     def sent(self, obj):
         self._put({"k": "tx", "w": _wall_ms(), "m": obj})
@@ -98,16 +113,28 @@ class FlightLog:
 
     def _open(self, goal, src):
         self._close_file()
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        name = f"{goal}_{src or 'sensor'}_{stamp}.jsonl"
+        base = run_name(goal, src)
+        name = base + ".jsonl"
         n = 1
         while os.path.exists(os.path.join(self.dir, name)):
             n += 1
-            name = f"{goal}_{src or 'sensor'}_{stamp}_{n}.jsonl"
+            name = f"{base}_{n}.jsonl"
         self._f = open(os.path.join(self.dir, name), "w", encoding="utf-8")
         self._key, self._bytes, self._full, self.current = (goal, src), 0, False, name
+        if self.video is not None:
+            try:
+                self.video.start(self.dir, name[:-len(".jsonl")])
+            except Exception:
+                pass                          # sem video a corrida segue (so o JSONL)
 
     def _close_file(self):
+        if self.video is not None and self._f is not None:
+            try:
+                info = self.video.stop()
+                if info:
+                    self._line({"k": "info", "w": _wall_ms(), "video": info})
+            except Exception:
+                pass
         if self._f is not None:
             try:
                 self._f.close()
@@ -142,6 +169,31 @@ class FlightLog:
         self._f.write(s)
 
 
+def list_runs(directory):
+    """Corridas para a pagina /logs: [(stem, [(nome, bytes, tipo)])], mais novas primeiro. tipo: log | video | indice |
+    anotado. Video sem JSONL (ex.: app caiu antes de criar o log) tambem aparece."""
+    from tools import video_log as vl
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    kinds = ((vl.VIZ_SUFFIX, "anotado"), (vl.INDEX_SUFFIX, "indice"), (vl.VIDEO_EXT, "video"), (".jsonl", "log"))
+    runs = {}
+    for n in names:
+        for suf, kind in kinds:
+            if n.endswith(suf):
+                p = os.path.join(directory, n)
+                runs.setdefault(n[:-len(suf)], []).append((n, os.path.getsize(p), kind, os.path.getmtime(p)))
+                break
+    order = {"log": 0, "video": 1, "indice": 2, "anotado": 3}
+    out = [(stem, sorted(fs, key=lambda x: order[x[2]])) for stem, fs in runs.items()]
+    out.sort(key=lambda r: max(f[3] for f in r[1]), reverse=True)
+    return [(stem, [(n, sz, k) for n, sz, k, _ in fs]) for stem, fs in out]
+
+
+DOWNLOAD_EXTS = (".jsonl", ".mjpg", ".csv")
+
+
 def list_logs(directory):
     """[(nome, bytes)] dos .jsonl, mais novos primeiro."""
     try:
@@ -152,9 +204,11 @@ def list_logs(directory):
     return [(f, os.path.getsize(os.path.join(directory, f))) for f in files]
 
 
-def safe_path(directory, name):
-    """Caminho do log `name` dentro de `directory` ou None (sem barras, so .jsonl, tem que existir)."""
-    if not name or name != os.path.basename(name) or name.startswith(".") or not name.endswith(".jsonl"):
+def safe_path(directory, name, exts=(".jsonl",)):
+    """Caminho do arquivo `name` dentro de `directory` ou None (sem barras nem '..', so as extensoes `exts`, tem que
+    existir). O viz.py passa DOWNLOAD_EXTS (log, video e indice)."""
+    if (not name or name != os.path.basename(name) or "/" in name or "\\" in name or name.startswith(".")
+            or not name.endswith(tuple(exts))):
         return None
     p = os.path.join(directory, name)
     return p if os.path.isfile(p) else None

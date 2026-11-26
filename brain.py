@@ -1,8 +1,9 @@
 """brain.py - cola entre a visao (StreamRunner) e o ESP32 via WebSocket. UNICO dono da conexao.
 
 Caminho 1: o ESP32 e o UNICO executor de manobras. O celular NAO tem maquina de estados: so
-  - narra a OPINIAO da visao ao ESP32: {"t":"vis","ok":0|1,"s":[5 ints]}  (~10 Hz; s = setores livres
-    0..100 em -30,-15,0,+15,+30 graus; ok=0 = sem opiniao: calibrando/erro)
+  - narra a OPINIAO da visao ao ESP32: {"t":"vis","ok":0|1,"s":[5 ints],"m":mov}  (~10 Hz; s = setores livres
+    0..100 em -30,-15,0,+15,+30 graus; ok=0 = sem opiniao: calibrando/erro; m = movimento da camera
+    (vision/motion.py), vai mesmo com ok=0: o ESP32 detecta BATIDA com ele (rodas empurrando e imagem parada))
   - manda o rumo do giroscopio:          {"t":"yaw","psi":graus,"r":graus/s}  (~20 Hz; + = direita;
     psi = integrador SEM limite, so o delta importa; r = giro filtrado sem vies)
   - em src=visao: {"t":"drive","v","s"} a cada frame (v pela visao, s = 0: reta) e, com
@@ -32,6 +33,7 @@ import time
 import viz
 from config import Config
 from control.heading import YawIntegrator
+from tools import video_log
 from tools.flight_log import FlightLog
 from tools.ws_link import WsLink
 
@@ -92,7 +94,7 @@ def start(url=URL):
     global _link, _calib_seen, _last_key, _last_conn_seq, _logger
     with _lock:
         if _logger is None and _log_dir:
-            _logger = FlightLog(_log_dir).start()
+            _logger = FlightLog(_log_dir, video=video_log.REC).start()   # video da corrida junto com o JSONL
         if _link is None:
             _link = WsLink(url, on_msg=_on_msg).start()
             _calib_seen = 0
@@ -299,7 +301,11 @@ def step(estado, conf=None, msg=None):
         if now - _last_vis_t >= VIS_EVERY_S:
             _last_vis_t = now
             use = p["ok"] and sectors is not None
-            _send({"t": "vis", "ok": 1 if use else 0, "s": sectors if use else [0, 0, 0, 0, 0]})
+            o = {"t": "vis", "ok": 1 if use else 0, "s": sectors if use else [0, 0, 0, 0, 0]}
+            mov = (p["raw"] or {}).get("mov")
+            if isinstance(mov, (int, float)) and not isinstance(mov, bool):
+                o["m"] = round(float(mov), 1)
+            _send(o)
 
         v = s = 0.0
         refuted = None

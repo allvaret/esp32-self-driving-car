@@ -66,6 +66,11 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | `control.cred_psi_tol_deg` | 35° | DEMO | Até quanto o rumo pode ter mudado para a ré ainda "voltar pelo caminho". Maior = ré mais ousada depois de curvas. |
 | `control.cred_min_s` | 0,15 s | DEMO | Abaixo disso não dá ré: gira direto. |
 | `control.escape_deg` / `escape_max` | 90° / 4 | DEMO | Fuga no "sem saída" (sempre o mesmo lado) e quantas antes do PRESO. 4 × 90° = uma volta. |
+| **`control.stall_cam_max`** (firmware `stall_cam_max`) | 3,0 | DEMO | Batida (0.7.0): movimento da câmera abaixo disso = imagem parada. Medido só em vídeos de mão (parado ~1–3, andando ~5–40). **Calibrar**: `mov` no log do celular com o carro parado com o motor ligado, andando devagar e empurrando uma parede. Tremor das rodas patinando acima do limiar = batida não detectada; chão liso sem textura andando devagar abaixo dele = batida falsa. |
+| `control.stall_s` | 1,5 s | DEMO | Tempo empurrando sem movimento até declarar batida. Menor = reage mais rápido, mais risco de falso na arrancada. |
+| `control.stall_yaw_dps` / `stall_sonar_cm` | 20 °/s / 8 cm | DEMO | Giro ou mudança do sonar central que provam que o carro anda (cancelam a batida). |
+| `control.stall_rev_s` / `stall_turn_deg` / `stall_free_s` | 0,5 s / 45° / 3 s | DEMO | Ré mínima e curva mínima (× batidas seguidas, até `escape_deg`) depois da batida; tempo andando livre que zera a contagem. |
+| `record.fps` / `jpeg_q` / `max_s` / `max_mb` / `keep_n` / `keep_mb` | 10 / 80 / 900 s / 400 MB / 10 / 1500 MB | DEMO | Vídeo da corrida (`tools/video_log.py`): ~35 KB por quadro 640×360 → ~21 MB/min a 10 fps. Rotação: ficam os 10 mais novos e no máximo 1,5 GB. |
 | `control.clear_s` | 0,2 s | HIPÓTESE | Tempo "limpo" para voltar a FRENTE (equivale a 3 ticks a 10 fps). Revisar com o fps real do S9. |
 | `control.guard_window_s / guard_max_episodes / guard_backoff_s` | 20 s / 2 / (1, 2, 4) s | DEMO | Testar com uma pessoa atravessando à frente do carro; ajustar para o tempo típico de passagem. |
 | `control.edge_near_h / edge_cov_min` | 0,20 / 0,50 | HIPÓTESE | Só validado no vídeo da parede 1 (rodapé de alto contraste). Parede 2 não detectada. |

@@ -1,4 +1,4 @@
-# Protocolo celular <-> ESP32 (firmware 0.6.3)
+# Protocolo celular <-> ESP32 (firmware 0.7.0)
 
 **Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
 *opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
@@ -37,7 +37,7 @@ Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garant
 |---|---|
 | `{"t":"goal","g":"explorar","src":"sensor"\|"visao"}` | motivacao do visor: define o modo pela fonte, **arma sozinho** (contagem de 4 s) e repassa a todos |
 | `{"t":"goal","g":"parar"}` | **reset completo** (ver abaixo) e avisa todos |
-| `{"t":"vis","ok":1,"s":[100,100,90,100,40]}` | opiniao da visao: 5 setores livres 0..100 em -30,-15,0,+15,+30 graus. `ok:0` (calibrando/erro) ou mais velha que `vis_fresh_ms` (300) = sem opiniao. **So o modo phone usa** |
+| `{"t":"vis","ok":1,"s":[100,100,90,100,40],"m":7.4}` | opiniao da visao: 5 setores livres 0..100 em -30,-15,0,+15,+30 graus. `ok:0` (calibrando/erro) ou mais velha que `vis_fresh_ms` (300) = sem opiniao. **So o modo phone usa os setores.** `m` (0.7.0, opcional) = movimento da camera (`vision/motion.py`: diferenca media da imagem em 0,3 s, 0..255; parado ~1, andando ~5..40); vai **mesmo com `ok:0`** e vale nos DOIS modos: e o que detecta a BATIDA |
 | `{"t":"yaw","psi":-12.3,"r":-45.2}` | rumo acumulado (graus, + = direita, sem limite; so o delta importa) e giro (graus/s). Mais velho que `yaw_fresh_ms` (200) = sem yaw (curva pelo tempo, `turn_dps`) |
 | `{"t":"drive","v":0.3,"s":0}` | so no modo phone; vale por `wd_ms` (500). `s` > 0 = direita |
 | `{"t":"avoid","deg":-15}` | modo phone, armado: o ESP32 faz o desvio. `deg` (opcional) = angulo sugerido pela visao (setor mais livre): a varredura comeca por ele e ele so e aceito se o sensor nao vetar. **Recusado** se a leitura central e valida, fresca (`fresh_ms`) e `>= d_clear_cm` (visao refutada pelo sensor; log `avoid recusado: ...`). Se chega de novo durante a manobra/ESPERA, a ESPERA termina em manobra completa |
@@ -110,7 +110,23 @@ perto de UM lado, distancias iguais em todos os angulos = o sensor nao girou (fi
 `c` (mediana central em cm, -1 = sem eco), `cls` (`valida`/`livre`/`suspeito`), `deg` (servo), `ang` (angulo escolhido na ultima varredura ou `null`),
 `vis`/`yaw` (1 = opiniao/rumo frescos), `L`/`R` (roda esquerda/direita, com a correcao de rumo; podem passar de 1 na roda
 lenta), `hold` (0 = fora de reta, 1 = so trim, 2 = corrigindo com yaw), `hc` (correcao aplicada), `trim` (trim aprendido),
-`cred` (credito de re em s a `v_rev`, ate `max_rev_ms` - 250), `esc` (fugas seguidas sem andar livre), `why`, `up`, `rst`, `rest`.
+`cred` (credito de re em s a `v_rev`, ate `max_rev_ms` - 250), `esc` (fugas seguidas sem andar livre), `mov` (ultimo `m` da
+camera, -1 = sem `m` fresco: sem deteccao de batida), `stl` (ms empurrando sem movimento na janela atual; batida em
+`stall_ms`), `bat` (batidas seguidas), `why`, `up`, `rst`, `rest`.
+
+### Batida (0.7.0)
+O sonar nao ve tudo (perna fina, objeto baixo, canto): o carro encostava e seguia empurrando. Agora, com as duas rodas
+para a frente em reta (comando base > 0,05, nas duas fontes e fora do DESVIO) e **nada mostrando movimento** por
+`stall_ms` (1500), o ESP32 trata como obstaculo. "Movimento" = camera `m > stall_cam_max` (3,0), OU giro
+`|r| >= stall_yaw_dps` (20), OU sonar central mudando `stall_sonar_cm` (8) desde o inicio da janela. Sem `m` fresco
+(celular fora/sem camera) a janela nao abre: o sonar sozinho erraria (le o chao/um reflexo constante andando).
+- Emite `{"t":"log","msg":"batida: rodas empurrando e nada se mexe ha 1500 ms (camera m=0.8, 1 seguida(s)): para, re e desvia"}`;
+  no modo phone tambem `ESP32 assumiu: batida` (e devolve ao celular no fim, como no veto).
+- O credito somado com as rodas presas (fantasma) sai da fila. DESVIO sem a ESPERA da guarda: PARADA -> **RE** de pelo
+  menos `stall_rev_ms` (500; cega e curta, o carro acabou de vir de tras; o credito real pode dar mais, ate `max_rev_ms`)
+  -> varredura -> curva de pelo menos `stall_turn_deg` x batidas seguidas (45, 90..., ate `escape_deg`), mesmo que a
+  varredura ache um angulo menor (o sonar NAO viu o obstaculo). `why` = `batida: desvia -45`.
+- `bat` volta a 0 depois de `stall_free_ms` (3000) andando COM movimento. Sem saida na varredura: fluxo normal do "sem saida".
 
 ### Credito de re e fuga (0.6.0)
 A re e cega (o sensor olha so para a frente). O ESP32 guarda uma fila de ate 6 trechos retos `{psi, credito}`: em reta

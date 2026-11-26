@@ -39,7 +39,7 @@
 #include <Preferences.h>        // NVS: guarda o trim aprendido do rumo entre desligamentos
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.6.3"
+#define FW_VERSION "car_firmware 0.7.0"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -101,6 +101,13 @@ struct Params {
   // caminho ja percorrido). Vale so enquanto o rumo nao mudou mais que cred_psi_tol. Sem saida: re pelo credito, depois
   // fuga de escape_deg para FORA do cone varrido, sempre para o mesmo lado (sem vai-e-vem); PRESO depois de escape_max.
   float cred_max = 1.0f, cred_psi_tol = 35, cred_min_ms = 150, escape_deg = 90, escape_max = 4;
+  // BATIDA (0.7.0): rodas empurrando para a frente em reta e NADA mostra movimento por stall_ms -> para, re e desvia.
+  // Movimento = camera do celular (indice "m" do vis: diferenca media da imagem em 0,3 s, 0..255) acima de
+  // stall_cam_max, OU giro |r| >= stall_yaw_dps, OU o sonar central mudando stall_sonar_cm. Sem o "m" fresco do
+  // celular nao ha deteccao (o sonar sozinho erra: le o chao/reflexo constante). Re de pelo menos stall_rev_ms (cega,
+  // curta: o carro acabou de vir de tras) e curva de pelo menos stall_turn_deg x batidas seguidas (ate escape_deg).
+  float stall_ms = 1500, stall_cam_max = 3.0f, stall_yaw_dps = 20, stall_sonar_cm = 8, stall_rev_ms = 500;
+  float stall_turn_deg = 45, stall_free_ms = 3000;
   // curva com yaw: faltando menos de turn_slow_deg, o giro cai proporcional ao erro (fator >= turn_k_min, para nao parar)
   float turn_slow_deg = 25, turn_k_min = 0.35f;
   // guarda de reentrada
@@ -144,6 +151,9 @@ static const KV PARAM_TABLE[] = {
   {"avoid_retries", &P.avoid_retries}, {"settle_ms", &P.settle_ms},
   {"cred_max", &P.cred_max}, {"cred_psi_tol", &P.cred_psi_tol}, {"cred_min_ms", &P.cred_min_ms},
   {"escape_deg", &P.escape_deg}, {"escape_max", &P.escape_max},
+  {"stall_ms", &P.stall_ms}, {"stall_cam_max", &P.stall_cam_max}, {"stall_yaw_dps", &P.stall_yaw_dps},
+  {"stall_sonar_cm", &P.stall_sonar_cm}, {"stall_rev_ms", &P.stall_rev_ms}, {"stall_turn_deg", &P.stall_turn_deg},
+  {"stall_free_ms", &P.stall_free_ms},
   {"turn_slow_deg", &P.turn_slow_deg}, {"turn_k_min", &P.turn_k_min},
   {"guard_window_ms", &P.guard_window_ms}, {"guard_max", &P.guard_max},
   {"backoff1_ms", &P.backoff1_ms}, {"backoff2_ms", &P.backoff2_ms}, {"backoff3_ms", &P.backoff3_ms},
@@ -190,6 +200,8 @@ static uint32_t visT = 0;
 static bool yawHave = false;
 static float yawPsi = 0, yawR = 0;         // rumo acumulado (graus, + = direita) e giro (graus/s)
 static uint32_t yawT = 0;
+static float movM = -1;                    // indice de movimento da camera (vis "m"); -1 = nunca veio
+static uint32_t movT = 0;
 
 static float cmdV = 0, cmdS = 0;           // ultimo drive do celular
 static uint32_t lastDriveT = 0;
@@ -214,6 +226,12 @@ static int credN = 0;
 static float revGoal = 0, revUsed = 0;    // re atual: quanto credito (v*s) ela deve andar e quanto ja andou
 static int escN = 0, escSide = 0;          // fugas (sem saida) seguidas e o lado delas (-1 esquerda, +1 direita, 0 livre)
 static uint32_t tRevStart = 0;
+// batida (stallTask): janela "empurrando sem movimento", credito fantasma dela e o desvio que ela abriu
+static bool stallWatch = false, stallFlag = false, stallRev = false;
+static uint32_t stallSince = 0, freeSince = 0;
+static float stallC0 = -1, stallCred = 0;
+static int stallN = 0;                     // batidas seguidas (zera depois de stall_free_ms andando COM movimento)
+static bool freeOn = false;
 
 // rumo em reta (holdStep)
 enum { H_OFF = 0, H_TRIM = 1, H_PI = 2 };   // fora de reta | so trim (sem yaw fresco ou arrancando) | malha fechada
@@ -687,13 +705,14 @@ static void credAdd(uint32_t now, float x) {             // x = v*dt andados em 
     last = &credQ[credN - 1];
   }
   last->c += x;
+  if (stallWatch) stallCred += x;                        // pode ser credito fantasma (rodas girando presas)
   float tot = 0;
   for (int i = 0; i < credN; i++) tot += credQ[i].c;
   for (int i = 0; i < credN && tot > P.cred_max; i++) {  // teto: o trecho mais VELHO perde primeiro
     float cut = credQ[i].c < tot - P.cred_max ? credQ[i].c : tot - P.cred_max;
     credQ[i].c -= cut; tot -= cut;
   }
-  if (last->c >= 0.3f * P.cred_max) { escN = 0; escSide = 0; }   // andou livre de novo: zera as fugas
+  if (!stallWatch && last->c >= 0.3f * P.cred_max) { escN = 0; escSide = 0; }   // andou livre de novo: zera as fugas
 }
 static float credAvail(uint32_t now) {                   // credito dos trechos que a re percorre de volta (mais novo -> velho)
   bool fr = yawFresh(now);
@@ -711,6 +730,13 @@ static float credRevMs(uint32_t now) {                   // quanto tempo de re (
 }
 static void credUse(float x) {                           // a re consome do trecho mais novo para tras
   revUsed += x;
+  while (x > 0 && credN > 0) {
+    CredSeg& q = credQ[credN - 1];
+    if (q.c > x) { q.c -= x; return; }
+    x -= q.c; credN--;
+  }
+}
+static void credDrop(float x) {                          // tira credito fantasma (batida), sem contar como re andada
   while (x > 0 && credN > 0) {
     CredSeg& q = credQ[credN - 1];
     if (q.c > x) { q.c -= x; return; }
@@ -821,6 +847,7 @@ static void resetAuto(uint32_t now) {
   gone = true; waitedAfter = false; noRevFlag = false; hintOk = false; hintFirst = false; haveAng = false;
   avoidFromPhone = false; avoidAgain = false;
   credClear(); escN = 0; escSide = 0;
+  stallWatch = stallFlag = stallRev = freeOn = false; stallN = 0; stallCred = 0;
   setWhy("");
   aimTo(0, now);
 }
@@ -917,6 +944,7 @@ static void decideAngle(uint32_t now, float forced) {
     }
   }
   if (!have || bestSc < P.d_stop_cm) {                   // nenhum angulo livre
+    stallFlag = false;                                   // (batida sem saida: segue o fluxo normal do "sem saida")
     tries++;
     float cr = credRevMs(now);
     if (tries <= (int)P.avoid_retries && cr >= P.cred_min_ms) {   // 1) re pelo caminho ja percorrido e olha de novo
@@ -939,6 +967,17 @@ static void decideAngle(uint32_t now, float forced) {
     turnTarget = escSide * P.escape_deg; chosenAng = turnTarget; haveAng = true; noRevFlag = true;
     snprintf(why, sizeof(why), "sem saida: fuga %+.0f (%d/%.0f)", turnTarget, escN, P.escape_max);
     logDecide(turnTarget, true, now);
+    startTurn(now);
+    return;
+  }
+  if (stallFlag) {                                       // batida: o sonar NAO viu o obstaculo; a re ja foi feita.
+    stallFlag = false;                                   // gira pelo menos stall_turn_deg x batidas seguidas (ate escape_deg)
+    float mn = P.stall_turn_deg * (stallN > 0 ? stallN : 1), cap = P.escape_deg > P.stall_turn_deg ? P.escape_deg : P.stall_turn_deg;
+    if (mn > cap) mn = cap;
+    if (absf(bestAng) < mn) bestAng = (bestAng < 0 ? -1.0f : 1.0f) * mn;
+    turnTarget = bestAng; chosenAng = bestAng; haveAng = true; revMs = 0;
+    snprintf(why, sizeof(why), "batida: desvia %+.0f", bestAng);
+    logDecide(bestAng, false, now);
     startTurn(now);
     return;
   }
@@ -989,6 +1028,14 @@ static void autoStep(uint32_t now, float* v, float* s) {
       }
       return;
     case S_PARADA:
+      if (el >= (uint32_t)P.stop_ms && stallFlag && !stallRev) {   // batida: RE primeiro (credito, no minimo stall_rev_ms)
+        float cr = credRevMs(now), cap = P.max_rev_ms - 250.0f;
+        revMs = cr > P.stall_rev_ms ? cr : P.stall_rev_ms;
+        if (revMs > cap) revMs = cap > 0 ? cap : 0;
+        revGoal = revMs / 1000.0f * P.v_rev; revUsed = 0; turnTarget = 0; haveAng = false; stallRev = true;
+        goSub(S_RE, now);
+        return;
+      }
       if (el >= (uint32_t)P.stop_ms) {
         buildScan(now);
         aimTo(scanDeg_[scanOrd[0]], now);
@@ -1014,7 +1061,9 @@ static void autoStep(uint32_t now, float* v, float* s) {
       *v = -P.v_rev;
       // fim da re pela DISTANCIA (credito andado: o servo voltando ao centro e a rampa atrasam a partida), pelo credito
       // que acabou ou, por seguranca, pelo tempo (revMs + 800 ms)
-      if (revUsed >= revGoal || (revUsed > 0 && credAvail(now) <= 0.001f) || el >= (uint32_t)revMs + 800) {
+      // (a re da batida passa do credito ate stall_rev_ms: nao para quando ele acaba)
+      if (revUsed >= revGoal || (!stallRev && revUsed > 0 && credAvail(now) <= 0.001f) || el >= (uint32_t)revMs + 800) {
+        stallRev = false;
         if (turnTarget == 0) { hintOk = false; buildScan(now); aimTo(scanDeg_[scanOrd[0]], now); goSub(S_OLHA, now); }  // sem saida: olha de novo
         else startTurn(now);
       }
@@ -1111,6 +1160,49 @@ static void phoneStep(uint32_t now, float* v, float* s) {
     }
   }
   *v = cmdV; *s = cmdS;
+}
+
+// ================================ BATIDA ====================================
+// O sonar nao ve tudo (perna fina, objeto baixo, canto): o carro encosta e segue empurrando. Aqui: rodas para a frente
+// em reta (comando base > 0,05 nas duas) e NADA mostra movimento por stall_ms -> trata como obstaculo: para, re e
+// desvio mais aberto. Movimento = camera (m > stall_cam_max), giro (|r| >= stall_yaw_dps) ou sonar central mudando
+// stall_sonar_cm desde o inicio da janela. Sem m fresco do celular a janela nao abre (nao ha deteccao).
+static bool movFresh(uint32_t now) { return movM >= 0 && (int32_t)(now - movT) <= (int32_t)P.vis_fresh_ms; }
+
+static void stallTrigger(uint32_t now) {
+  uint32_t ms = now - stallSince;
+  stallWatch = false;
+  credDrop(stallCred); stallCred = 0;                    // o "andado" com as rodas presas nao vale como caminho de volta
+  stallN++;
+  emitf("{\"t\":\"log\",\"msg\":\"batida: rodas empurrando e nada se mexe ha %lu ms (camera m=%.1f, %d seguida(s)): para, re e desvia\"}",
+        (unsigned long)ms, movM, stallN);
+  if (mode == MODE_PHONE && !delegated) {
+    delegated = true;
+    emitf("{\"t\":\"log\",\"msg\":\"ESP32 assumiu: batida\"}");
+  }
+  cst = C_FRENTE; sub = S_NONE; hintOk = false; avoidFromPhone = false;
+  enterAvoid(now, "batida (sem movimento)", false, true);
+  stallFlag = true; stallRev = false;
+}
+
+static void stallTask(uint32_t now) {
+  bool fsm = mode == MODE_AUTO || delegated;
+  bool pushing = armed && !diagHold && (!fsm || cst != C_DESVIO) &&
+                 rampL > 0.05f && rampR > 0.05f && absf(rampL - rampR) < 0.05f;
+  bool cam = movFresh(now);
+  bool turning = yawFresh(now) && absf(yawR) >= P.stall_yaw_dps;
+  if (pushing && cam && movM > P.stall_cam_max && !turning) {   // andando COM movimento: conta para zerar as batidas
+    if (!freeOn) { freeOn = true; freeSince = now; }
+    if (stallN && now - freeSince >= (uint32_t)P.stall_free_ms) stallN = 0;
+  } else freeOn = false;
+  if (!pushing || !cam || movM > P.stall_cam_max || turning) { stallWatch = false; return; }
+  float c = (haveC && (int32_t)(now - centerT) <= (int32_t)P.fresh_ms && centerCm >= 0) ? centerCm : -1;
+  if (!stallWatch) { stallWatch = true; stallSince = now; stallC0 = c; stallCred = 0; return; }
+  if (c >= 0 && stallC0 >= 0 && absf(c - stallC0) >= P.stall_sonar_cm) {   // o sonar ve o carro andando
+    stallSince = now; stallC0 = c; stallCred = 0; return;
+  }
+  if (stallC0 < 0) stallC0 = c;
+  if (now - stallSince >= (uint32_t)P.stall_ms) stallTrigger(now);
 }
 
 // ============================== DIAGNOSTICO =================================
@@ -1328,12 +1420,13 @@ static void printHeartbeat(uint32_t now) {
   if (haveAng) snprintf(ang, sizeof(ang), "%.0f", chosenAng); else strcpy(ang, "null");
   emitf("{\"t\":\"state\",\"mode\":\"%s\",\"src\":\"%s\",\"armed\":%s,\"esp\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
         "\"cls\":\"%s\",\"ang\":%s,\"vis\":%d,\"yaw\":%d,"
-        "\"L\":%.2f,\"R\":%.2f,\"hold\":%d,\"hc\":%.2f,\"trim\":%.2f,\"cred\":%.2f,\"esc\":%d,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
+        "\"L\":%.2f,\"R\":%.2f,\"hold\":%d,\"hc\":%.2f,\"trim\":%.2f,\"cred\":%.2f,\"esc\":%d,\"mov\":%.1f,\"stl\":%lu,\"bat\":%d,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
         mode == MODE_AUTO ? "auto" : "phone", mode == MODE_AUTO ? "sensor" : "visao",
         armed ? "true" : "false", delegated ? "true" : "false",
         diagHold ? "DIAG" : (fsm ? CN[cst] : "-"), diagHold ? (diagTest ? DIAG_N[diagTest] : "parado") : (fsm ? SN[sub] : ""),
         centerCm, servoDeg, haveC ? KN[centerClass(now)] : "-", ang, visUsable(now) ? 1 : 0, yawFresh(now) ? 1 : 0,
-        curL, curR, holdMode, holdCorr, holdTrim, credRevMs(now) / 1000.0f, escN, why, (unsigned long)(now / 1000),
+        curL, curR, holdMode, holdCorr, holdTrim, credRevMs(now) / 1000.0f, escN, movFresh(now) ? movM : -1.0f,
+        (unsigned long)(stallWatch ? now - stallSince : 0), stallN, why, (unsigned long)(now / 1000),
         (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?", (unsigned long)rtcRestores);
 }
 
@@ -1349,6 +1442,7 @@ static void handleJson(const char* line, uint32_t now) {
     cmdV = v; cmdS = s; lastDriveT = now;
   } else if (strcmp(t, "vis") == 0) {                      // opiniao da visao: ok + 5 setores livres (0..100)
     float ok = 0;
+    if (jsonNum(line, "m", &x)) { movM = x; movT = now; } // movimento da camera: vale mesmo com ok:0 (calibrando)
     int s5[5];
     jsonNum(line, "ok", &ok);
     if (ok > 0.5f && jsonInts5(line, "s", s5)) {
@@ -1552,6 +1646,7 @@ void loop() {
     else phoneStep(now, &v, &s);
   }
   driveApply(now, v, s);
+  stallTask(now);
   turnReportTask(now);
   printHeartbeat(now);
   ledTask(now);

@@ -1,6 +1,6 @@
 # Como ler o log do carrinho
 
-O S9 grava um arquivo por corrida: `explorar_<fonte>_<data>_<hora>.jsonl`.
+O S9 grava um arquivo por corrida: `corrida_<data>_<hora>_<fonte>.jsonl` (até a 0.7.0: `explorar_<fonte>_<data>_<hora>.jsonl`).
 Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** é a hora em que foi gravado
 (milissegundos desde 1970; subtraia o primeiro `w` para ter "segundos desde o início").
 

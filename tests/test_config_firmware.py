@@ -32,6 +32,9 @@ def test_control_config_matches_firmware_params():
         "turn_slow_deg": p["turn_slow_deg"], "turn_k_min": p["turn_k_min"],
         "cred_max": p["cred_max"], "cred_psi_tol_deg": p["cred_psi_tol"], "cred_min_s": p["cred_min_ms"] / 1000,
         "escape_deg": p["escape_deg"], "escape_max": p["escape_max"],
+        "stall_s": p["stall_ms"] / 1000, "stall_cam_max": p["stall_cam_max"], "stall_yaw_dps": p["stall_yaw_dps"],
+        "stall_sonar_cm": p["stall_sonar_cm"], "stall_rev_s": p["stall_rev_ms"] / 1000, "stall_turn_deg": p["stall_turn_deg"],
+        "stall_free_s": p["stall_free_ms"] / 1000,
         "pwm_min": p["pwm_min"], "pwm_max": p["pwm_max"], "pwm_min_l": p["pwm_min_l"], "pwm_max_l": p["pwm_max_l"],
         "pwm_min_r": p["pwm_min_r"], "pwm_max_r": p["pwm_max_r"],
     }

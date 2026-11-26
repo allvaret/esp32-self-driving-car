@@ -584,6 +584,44 @@ tr, o = run(AUTO, [*SV, "--obst", 6000, 25, "--servo-dead"], t_end=12000)
 dd = decides(o)
 fails += not ok(dd and len(set(dd[0]["sc"])) == 1, f"(s) controle: servo parado na FSM reproduz o campo (notas iguais) {dd and dd[0]['sc']}")
 
+# ===== (t) batida (0.7.0): rodas empurrando e a camera do celular parada -> para, re e desvia =====
+# sim.cpp --bump T DEG: obstaculo que o SONAR NAO VE; a frente fica presa ate o carro girar DEG. --cam: o "m" do vis sai do
+# movimento FISICO (0,8 parado/preso, ~9 a v_cruise). Sem --cam = celular sem camera: nao ha deteccao.
+def bump_run(extra, inp=AUTO, t_end=26000):
+    tr, o = run(inp, ["--yaw", *extra], t_end=t_end)
+    logs = [json.loads(m)["msg"] for t, m in o if m.startswith('{"t":"log"')]
+    return tr, o, logs, [r for r in tr if r["bumps"] != "0"]
+tr, o, logs, stuck = bump_run(["--cam", "--bump", 7000, 60])
+bat = [t for t, m in o if '"batida:' in m and '"t":"log"' in m]
+t_stuck = stuck[0]["t"] if stuck else 0
+fails += not ok(bat and 0 < bat[0] - t_stuck <= 1500 + 400,
+                f"(t) batida detectada {bat[0] - t_stuck if bat else '-'} ms depois de prender (stall_ms 1500 + atraso da camera)")
+rs = [(a, b) for a, b in rev_spans() if a > t_stuck]
+fwd = sum(float(r["fwd"]) * 0.1 for r in tr if r["t"] < t_stuck and float(r["fwd"]) > 0)    # v*s REAL antes da batida
+rev = sum(-float(r["curL"]) * 0.1 for r in tr if r["subn"] == "RE" and r["t"] < (rs[0][1] if rs else 0))
+fails += not ok(rs and rs[0][0] - bat[0] <= 500 and 0 < rev <= fwd + 0.03,
+                f"(t) para e da RE logo depois (em {rs[0][0] - bat[0] if rs else '-'} ms), sem passar do caminho real: re {rev:.2f} x frente {fwd:.2f} v*s")
+curvas = evs(why="batida: desvia")
+fails += not ok(len(curvas) == 2 and abs(float(curvas[0]["why"].split()[-1])) >= 45 and abs(float(curvas[1]["why"].split()[-1])) >= 90,
+                f"(t) desvia mais aberto que a varredura e abre mais na 2a batida seguida: {[c['why'] for c in curvas]}")
+fails += not ok(float(at(tr, 25500)["fwd"]) > 0.3 and at(tr, 25500)["cst"] == "0" and not evs(subn="PRESO"),
+                f"(t) depois das batidas o carro anda de verdade (fwd {at(tr, 25500)['fwd']}) em FRENTE")
+tr, o, logs, _ = bump_run(["--cam"])
+fails += not ok(not any("batida" in m for m in logs) and float(at(tr, 25500)["curL"]) > 0.3,
+                "(t) andando livre com a camera ligada: nenhuma batida falsa em 21 s")
+tr, o, logs, stuck = bump_run(["--bump", 7000, 60], t_end=14000)
+fails += not ok(stuck and not any("batida" in m for m in logs) and float(at(tr, 13500)["curL"]) > 0.3,
+                "(t) sem o m da camera (celular fora) nao ha deteccao: o sonar sozinho nao basta (limite conhecido)")
+tr, o, logs, _ = bump_run(["--cam", "--cam-noise", 5, "--bump", 7000, 60], t_end=14000)
+fails += not ok(not any("batida" in m for m in logs),
+                "(t) camera tremendo acima de stall_cam_max (5 > 3) com as rodas presas: nao detecta (calibrar no campo)")
+tr, o, logs, _ = bump_run(["--cam", "--cam-noise", 5, "--bump", 7000, 60, "--set", "stall_cam_max", 6], t_end=14000)
+fails += not ok(any("batida" in m for m in logs), "(t) ... e com stall_cam_max acima do tremor (cfg) volta a detectar")
+# phone (src=visao): o celular manda drive; na batida o ESP32 assume, faz a manobra e devolve
+tr, o, logs, stuck = bump_run(["--cam", "--bump", 7000, 60], inp=base + drives(4300, 26000, 0.35), t_end=26000)
+fails += not ok("ESP32 assumiu: batida" in logs and "celular retomou o controle" in logs and evs(subn="RE"),
+                f"(t) modo phone: na batida o ESP32 assume (re + desvio) e depois devolve ao celular {[m for m in logs if 'batida' in m or 'retomou' in m][:3]}")
+
 # ===== Python <-> firmware =====
 from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink
 link = MemoryLink(); head = LinkRangeHead(link, settle_s=0.15)

@@ -33,7 +33,7 @@ Thread única `exec` da `LiveActivity` para câmera + Python.
 | 8 | só `src=visao`: `{"t":"drive","v","s":0}` a cada frame (v pela visão); `OBSTACULO` + armado → `{"t":"avoid","deg":<setor mais livre entre -30,-15,+15,+30>}` (máx. 1 a cada 2 s), **exceto** se a leitura central é válida, fresca e ≥ `d_clear` (60 cm): visão refutada, `v = V_SLOW`, sem avoid, `think` "visão refutada pelo sensor (X cm)" | | |
 | 9 | `brain` envia `think` **só da visão** (estado, conf, setores). As decisões aparecem no `state` do ESP32 | | |
 | 10 | ESP32: `handleJson` → FSM (`autoStep`/`phoneStep`) → `driveApply` | | PWM |
-| 11 | Toda mensagem enviada e recebida e cada frame vão para o **log JSONL** (fila + thread, flush 1 s); nada é transmitido durante a corrida | | `filesDir/logs/explorar_<src>_<data>.jsonl` |
+| 11 | Toda mensagem enviada e recebida e cada frame vão para o **log JSONL** (fila + thread, flush 1 s); nada é transmitido durante a corrida | | `filesDir/logs/corrida_<data>_<hora>_<src>.jsonl` (+ `.mjpg` e `_indice.csv` do vídeo) |
 
 Quem envia o quê:
 - `{"t":"goal"}`: só o visor (**Explorar: sensor**, **Explorar: visão**, **PARAR TUDO**). O ESP32 aplica (modo pela fonte, arma em 4 s) e repassa a todos.
@@ -120,6 +120,8 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré pelo **crédito** e olha de no
 | Campo 22/11 (0.5.2): degraus descendo — roda esquerda ~374°/s em **qualquer** duty (45..220), direita obedece; GPIO19 medido em ~3 V parado (fio solto), ENA do módulo 0 V | **erro de código**: no core 3.x o `ledcAttach` escolhe o canal sozinho; sem o servo de direção, o ENA caía no canal 1, que divide o timer 0 com o servo (50 Hz/16 bits) e não recebia o PWM. 0.5.3: `ledcAttachChannel` com canais explícitos (0 = servo, 2/3 = motores). Provavelmente também era o "defeito" dos pinos 25/26/27. Código do servo de direção (`STEER_SERVO`, nunca usado) removido: o carro é só diferencial |
 | Campo 22/11 (0.5.3): mesmo com os canais explícitos, a esquerda segue em ~380–400°/s de 220 a 45; no Explorar visão começa reto e vira à direita (L 0,15 × R 0,9, +146°/s) | o canal não era a (única) causa: **GPIO19 com defeito**. 0.5.4: `PIN_ENA 13` (passar o fio do ENA para o GPIO13) |
 | Campo 23/11 (0.5.4): ENA no GPIO13 resolveu (esquerda para em ~120 como a direita). No Explorar visão o carro ficou PRESO num canto: sem eco + visão bloqueada nas 4 direções, ré fixa de 0,75 s e só ±30° de varredura | 0.6.0: **crédito de ré** (fila de trechos retos `{psi, v·s}`; a ré cega só volta pelo caminho percorrido) e **fuga** de 90° para fora do cone, sempre para o mesmo lado (não 180°, que vira vai-e-vem); PRESO só depois de 4 fugas. Simulado: beco abre em 60° → sai; beco fechado → 4 fugas ao mesmo lado → PRESO. Também: a faixa por roda ainda não foi aplicada (trim foi a +0,37) |
+| Campo 26/11 (0.6.3, à tarde): com o fio do servo no GPIO4 o sensor **continuou sem girar** (relato; sem log da 0.6.3 na pasta). O carro seguiu sem bater "ao mínimo", mas quando **encosta** em algo que o sonar não vê continua mandando força às rodas | Dois pinos diferentes com o mesmo sintoma: o defeito provavelmente é do **servo** (ou do 5 V/GND dele), não do GPIO. 0.7.0: **batida** — rodas empurrando em reta e nada se mexendo (câmera do celular `m`, giro e sonar) por 1,5 s ⇒ para, ré (≥ 0,5 s) e desvio de ≥ 45° (90° na 2ª seguida). E o **vídeo da corrida** no S9 (`.mjpg` + índice ao lado do JSONL, `/logs`) |
+| Campo 26/11 (fim da tarde, firmware 0.7.0 + **app antigo**): `carrinho_2026-11-26T15-38/15-39`, `explorar_sensor_20261126_133728`. O **servo girou** (varreduras ±15/±30 no log), sem mudança de código. O carro bateu duas vezes e **não reagiu**; nenhum vídeo apareceu | O app no celular não foi reinstalado: os registros `f` do celular não têm `mov`/`vf` e o ESP32 recebeu `mov: -1` o tempo todo (`stl` e `bat` sempre 0). Sem o `m` da câmera a batida fica desligada por projeto, e o app antigo não grava vídeo: **as duas funções ainda não foram testadas**. Servo intermitente: provável mau contato no fio de sinal/GND (o servo tem alimentação própria: o GND dela precisa estar ligado ao GND do ESP32). Arquivos da corrida renomeados: `corrida_<data>_<hora>_<fonte>` |
 | Limpeza 26/11 | 0.6.3: sai todo o código do servo de direção (`STEER_MODE`, `PIN_STEER_SERVO`, `steer_trim_deg`, `steer_max_deg`), que nunca foi usado: o carro é só diferencial. Sem mudança de comportamento (sim e testes iguais) |
 | Campo 26/11 (0.6.1): teste do servo = 80,6 cm nos 5 ângulos com `hz` 50 (o PWM do servo está ligado no firmware); multímetro no GPIO18: 0 V e sem continuidade até o servo. O carro andou sem bater (rodas custaram a partir uma vez). `ENA/ENB 0 Hz` com o carro parado: o `ledcReadFreq` do core devolve 0 com duty 0 (não é falha) | 0.6.2: **servo do sensor no GPIO4** (livre, não é pino de boot; o servo de direção, nunca usado, passou para o 14). O log diz `parado` em vez de 0 Hz; o sim imita o core (duty 0 → 0 Hz) |
 | Campo 26/11 (0.6.0): o crédito de ré funcionou (`cred` 1,25 s → ré → 0, depois gira direto), mas o carro quase só fazia "sem saída: fuga". **O sensor não gira desde 23/11**: em toda varredura de 23/11 e 26/11 as 4 direções leem a **mesma** distância (ex. 26,4 / 26,4 / 26,4 / 26,4); em 20–21/11 (0.5.2) variavam (46 / 47 / 65 / 67). O firmware manda o servo (`aim` −15/−30/+15/+30 no diário). No Explorar visão de 10:34 a câmera não calibrou: o celular estava desconectado no clique e o `calibrar` se perdeu (o ESP32 reenvia só o `goal`); na fonte sensor o visor nunca mandava `calibrar` | 0.6.1: o código do servo é o mesmo da 0.5.2, exceto o `ledcAttachChannel` da 0.5.3. Pelo fonte do core 3.3.12, o timer é escolhido por frequência/resolução nos dois casos (não era a causa da roda), mas por segurança **volta o `ledcAttach` da 0.5.2**. Novo: cada cliente recebe `pwm: servo GPIO18 50 Hz…` (frequência real) e o visor tem **Servo do sensor** (−60..+60, sem armar), que diz se o sensor girou. O sim agora lê o ângulo do **PWM** do pino do servo (`--servo-dead`, `--servo-nopwm`). Suspeita principal: o **fio do GPIO18**, vizinho do 19 que foi mexido em 22/11. Brain: goal `explorar` novo com o carro parado reaprende o chão (as duas fontes), sem depender do `calibrar` |
@@ -132,14 +134,37 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré pelo **crédito** e olha de no
 
 ## 7. Checklist de teste de campo (na ordem)
 
-Antes de tudo: passar o fio de **sinal do servo** do GPIO18 para o **GPIO4** e gravar o firmware **0.6.3** (se algo piorar, volte à 0.6.2, commit e56fc0f) (fio do ENA no **GPIO13**; aplicar a faixa das rodas e zerar o trim no passo 0) e o app (o brain mudou: reaprende o chão em todo Explorar novo); app aberto e conectado (o yaw vem dele).
-No visor, **Gravar log** ligado o tempo todo. Ao abrir o visor, o log mostra `car_firmware 0.6.3 | pwm: servo GPIO4 50 Hz, ENA GPIO13 parado, ENB GPIO32 parado` (andando: 1000 Hz); `ERRO sem PWM` = pare e mande o log.
+Antes de tudo: gravar o firmware **0.7.0** e **recompilar e instalar o app** pelo Android Studio (Run ▶ com o S9 no
+cabo). Só regravar o ESP32 não basta: o Python do celular vai dentro do app, e é ele que manda o movimento da câmera `m`
+(que detecta a batida) e grava o vídeo. No teste de 26/11 o app era o antigo. **Confira antes de andar**: o log do celular
+novo chama `corrida_<data>_<hora>_<fonte>.jsonl` (não `explorar_...`), e o chip do visor mostra `camera: mov N`. Fio do servo no **GPIO4**, ENA no **GPIO13**. Se algo piorar: firmware 0.6.3
+(commit 42c0751). App aberto e conectado (o yaw e o `m` vêm dele).
+No visor, **Gravar log** ligado o tempo todo. Ao abrir o visor, o log mostra `car_firmware 0.7.0 | pwm: servo GPIO4 50 Hz, ENA GPIO13 parado, ENB GPIO32 parado` (andando: 1000 Hz); `ERRO sem PWM` = pare e mande o log.
+O chip de fonte mostra `camera: mov N`: carro parado ~1, andando bem mais. `sem movimento medido` = o celular não está
+mandando o `m` (app antigo?) e **não há detecção de batida**.
+
+**B. Batida (0.7.0, no chão, Explorar: sensor).** Deixe o carro ir contra algo que o sonar **não vê** (pé de cadeira,
+caixa baixa, ou segure o para-choque com a mão). Em ~1,5 s com as rodas empurrando: log `batida: rodas empurrando e nada
+se mexe ha 1500 ms (camera m=…)`, PARADA → **RE** → varredura → curva de ≥ 45° (`why: batida: desvia -45`). Batendo de
+novo logo em seguida: 90°. Anote no log do celular o `mov` com o carro **parado empurrando** e **andando devagar**:
+- não detectou e o `mov` parado ficou acima de 3 (tremor das rodas): suba `stall_cam_max` (cfg) para entre os dois valores;
+- batida **falsa** andando (chão liso, pouca textura): `mov` andando abaixo de 3: baixe `stall_cam_max` ou suba `stall_ms`.
+Repita no Explorar: visão (log `ESP32 assumiu: batida` e depois `celular retomou o controle`).
+
+**V. Vídeo da corrida.** Depois de uma corrida, abra o link de logs do visor: a corrida aparece com **log**, **vídeo** e
+**índice** (tamanhos) e **assistir** toca o vídeo no navegador; o stream do visor não pode travar enquanto baixa. No PC:
+copie os arquivos para `docs/logs/` e rode `python -m tools.video_to_mp4 docs/logs` (converte todas as corridas novas em
+`.mp4`, ao lado), depois `python -m replay.replay_main docs/logs/corrida_<...>.mp4`. Feche o app no meio de uma
+corrida uma vez: o vídeo até ali tem que abrir (ver `docs/como_ler_o_log.md`, "Vídeo da corrida").
 
 **00. Servo do sensor (desarmado, antes de tudo).** Mão (ou caixa) a ~30 cm só do lado ESQUERDO do carro, botão
 **Servo do sensor**. Olhe o sensor: tem que ir à esquerda, centro, direita e voltar (~5 s). O visor mostra a distância
 por ângulo: −60/−30 perto (a mão), 0/+30/+60 longe ou "sem eco". "Distâncias IGUAIS" = o sensor não girou: com o
 carro desligado, confira o fio de **sinal** do servo no **GPIO4** (o GPIO18 morreu em 26/11), o **5 V** e o **GND** do servo
-(servo sem 5 V não gira e às vezes treme). Sem o servo, o carro ainda anda, mas só olha para a frente (toda varredura
+(servo sem 5 V não gira e às vezes treme). No GPIO4 ele falhou numa corrida e girou na seguinte (26/11), sem mudança
+de código: mau contato. O servo tem fonte própria, então o **GND dessa fonte tem que estar ligado ao GND do ESP32**
+(sem GND comum o sinal não tem referência e o servo falha "às vezes"). Refaça ou troque o fio de sinal e o de GND e
+mexa neles com o teste rodando: se o sensor parar quando você mexe, é ali. Sem o servo, o carro ainda anda, mas só olha para a frente (toda varredura
 vira "sem saída" → fuga de 90°).
 
 **0. Diagnóstico pelo visor (carro no chão, ~1,5 m livre em volta).** Seção **Diagnóstico** do `http://192.168.4.1`:
