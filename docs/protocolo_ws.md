@@ -1,4 +1,4 @@
-# Protocolo celular <-> ESP32 (firmware 0.6.1)
+# Protocolo celular <-> ESP32 (firmware 0.6.2)
 
 **Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
 *opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
@@ -96,7 +96,7 @@ fica em `+-trim_max`, e e gravado na NVS ao desarmar e lido no boot. `{"t":"trim
 `hello`, `state` (a cada 500 ms), `range` (cada leitura; no modo auto so com clientes WS),
 `log`, `cfg_ok`, `pong`, `scan`, `turn` (fim de cada curva), `diag` (fim de cada teste) e os `goal`/`think` repassados.
 Campos de `turn` e `diag`: `docs/como_ler_o_log.md`. Ao conectar, cada cliente recebe o `goal` atual (com `src`), um `log` com a versao e a frequencia **real** de cada PWM
-(`car_firmware 0.6.1 | pwm: servo GPIO18 50 Hz, ENA GPIO13 1000 Hz, ENB GPIO32 1000 Hz`; 0 Hz ou `ERRO sem PWM: GPIOx` =
+(`car_firmware 0.6.2 | pwm: servo GPIO4 50 Hz, ENA GPIO13 parado, ENB GPIO32 1000 Hz`; `parado` = duty 0 (o core le 0 Hz), `ERRO sem PWM: GPIOx` =
 o pino nao recebe PWM) e o diario do servo.
 
 ### Teste do servo do sensor (0.6.1)

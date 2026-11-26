@@ -196,7 +196,7 @@ function servoRes(m){
   const v=m.cm.filter(x=>x!=null&&x>=0),same=v.length>=4&&Math.max(...v)-Math.min(...v)<3;
   let s='Servo do sensor'+(m.abortado?'  ABORTADO: '+m.abortado:'')+'\n'+m.deg.map((d,i)=>d+'°: '+(m.cm[i]==null?'sem eco':(m.cm[i]<0?'-':m.cm[i].toFixed(0)+' cm'))).join('   ')+'\nPWM no pino do servo: '+m.hz+' Hz',bad=false;
   if(m.hz===0){s+='\nERRO: pino do servo SEM PWM (firmware). Grave o log e mande.';bad=true;}
-  else if(same){s+='\nDistancias IGUAIS em todos os angulos: o sensor NAO girou. Confira o fio de sinal do servo no GPIO18 (vizinho do antigo 19), o 5 V e o GND do servo.';bad=true;}
+  else if(same){s+='\nDistancias IGUAIS em todos os angulos: o sensor NAO girou. Confira o fio de sinal do servo (GPIO4 desde a 0.6.2), o 5 V e o GND do servo.';bad=true;}
   else if(v.length<4)s+='\nPoucas leituras com eco: ponha a mao ~30 cm a esquerda do carro e repita.';
   else s+='\nDistancias diferentes por angulo: o servo gira.';
   $('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),bad?'var(--er)':'var(--ok)');

@@ -113,7 +113,7 @@ bool ledcAttach(uint8_t pin, uint32_t hz, uint8_t bits) {
 }
 bool ledcAttachChannel(uint8_t pin, uint32_t hz, uint8_t bits, uint8_t) { return ledcAttach(pin, hz, bits); }
 bool ledcWrite(uint8_t pin, uint32_t duty) { if (!g_hz[pin]) return false; g_pwm_pin[pin] = (int)duty; return true; }
-uint32_t ledcReadFreq(uint8_t pin) { return g_hz[pin]; }
+uint32_t ledcReadFreq(uint8_t pin) { return g_pwm_pin[pin] ? g_hz[pin] : 0; }   // como o core 3.3: duty 0 -> 0
 #else
 double ledcSetup(uint8_t ch, double hz, uint8_t bits) { g_chbits[ch] = bits; g_chhz[ch] = (uint32_t)hz; return hz; }
 void ledcAttachPin(uint8_t pin, uint8_t ch) {

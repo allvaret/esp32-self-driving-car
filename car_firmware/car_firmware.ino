@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.6.1
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.6.2
  *
  * CAMINHO 1: o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
  * a OPINIAO da visao ({"t":"vis"}) e o rumo do giroscopio ({"t":"yaw"}). Quem para, varre e desvia e este arquivo.
@@ -39,7 +39,7 @@
 #include <Preferences.h>        // NVS: guarda o trim aprendido do rumo entre desligamentos
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.6.1"
+#define FW_VERSION "car_firmware 0.6.2"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -62,8 +62,8 @@
 // Evitados de proposito: 0/2/12/15 (boot), 6-11 (flash), 1/3 (USB serial), 34-39 (so entrada).
 #define PIN_TRIG 23
 #define PIN_ECHO 22             // ATENCAO: ECHO do HC-SR04 e 5 V -> divisor 1k/2k ate este pino
-#define PIN_SENSOR_SERVO 18
-#define PIN_STEER_SERVO 4       // so no STEER_SERVO (nao usado no diferencial)
+#define PIN_SENSOR_SERVO 4      // sinal do servo do sensor. GPIO18 saiu (26/11: PWM de 50 Hz ligado no firmware, 0 V no pino)
+#define PIN_STEER_SERVO 14      // so no STEER_SERVO (nao usado no diferencial)
 #define STEER_SERVO_SIGN 1
 #define PIN_ENA 13              // L298N: ENA (PWM) -> OUT1/OUT2 -> roda ESQUERDA. GPIO19 saiu (preso em ~3 V, 22/11)
 #define PIN_IN1 16              // RX2  (roda ESQUERDA)
@@ -442,10 +442,15 @@ static void logDecide(float ang, bool noExit, uint32_t now) {     // angulo esco
 }
 
 static void onWsConnect(uint8_t num) {                   // todo cliente novo recebe o diario (reenviado: "replay":1)
-  char pw[200];                                          // e a frequencia REAL de cada PWM (0 Hz = pino sem PWM)
-  snprintf(pw, sizeof(pw), "{\"t\":\"log\",\"msg\":\"%s | pwm: servo GPIO%d %u Hz, ENA GPIO%d %u Hz, ENB GPIO%d %u Hz%s%s\"}",
-           FW_VERSION, PIN_SENSOR_SERVO, (unsigned)pwmFreq(PIN_SENSOR_SERVO, CH_SENSOR_SERVO), PIN_ENA,
-           (unsigned)pwmFreq(PIN_ENA, CH_ENA), PIN_ENB, (unsigned)pwmFreq(PIN_ENB, CH_ENB),
+  // e a frequencia REAL de cada PWM. O ledcReadFreq do core da 0 com duty 0: motor parado sai "parado", nao "0 Hz"
+  char pw[220], fs[3][16];
+  const int pins[3] = {PIN_SENSOR_SERVO, PIN_ENA, PIN_ENB}, chs[3] = {CH_SENSOR_SERVO, CH_ENA, CH_ENB};
+  for (int i = 0; i < 3; i++) {
+    uint32_t hz = pwmFreq(pins[i], chs[i]);
+    if (hz) snprintf(fs[i], sizeof(fs[i]), "%u Hz", (unsigned)hz); else strcpy(fs[i], "parado");
+  }
+  snprintf(pw, sizeof(pw), "{\"t\":\"log\",\"msg\":\"%s | pwm: servo GPIO%d %s, ENA GPIO%d %s, ENB GPIO%d %s%s%s\"}",
+           FW_VERSION, PIN_SENSOR_SERVO, fs[0], PIN_ENA, fs[1], PIN_ENB, fs[2],
            pwmErr[0] ? " | ERRO sem PWM: " : "", pwmErr);
   ws.sendTXT(num, pw);
   uint32_t first = rtcEvSeq > EV_N ? rtcEvSeq - EV_N + 1 : 1;

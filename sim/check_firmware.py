@@ -568,13 +568,16 @@ def servo_diag(args, pre=(), t_end=7000):
 d, pw = servo_diag([])
 fails += not ok(d and d["deg"] == [-60, -30, 0, 30, 60] and [round(x or 0) for x in d["cm"]] == [40, 40, 120, 90, 90] and d["hz"] == 50,
                 f"(s) teste do servo desarmado: cada angulo le o seu obstaculo {d and d['cm']} ({d and d['hz']} Hz)")
-fails += not ok("servo GPIO18 50 Hz" in pw and "ENA GPIO13 1000 Hz" in pw and "ENB GPIO32 1000 Hz" in pw and "ERRO" not in pw,
-                f"(s) cliente novo recebe a versao e a frequencia real de cada PWM: {pw[:140]}")
+fails += not ok("servo GPIO4 50 Hz" in pw and "ENA GPIO13 parado" in pw and "ENB GPIO32 parado" in pw and "ERRO" not in pw,
+                f"(s) cliente novo recebe a versao e a frequencia real de cada PWM (motor parado = 'parado', nao 0 Hz): {pw[:140]}")
+run(AUTO + [(6000, "@ws_connect")], [], t_end=6500)
+pw = next((txt for _, _, txt in LAST["ws"] if "pwm:" in txt), "")
+fails += not ok("ENA GPIO13 1000 Hz" in pw and "ENB GPIO32 1000 Hz" in pw, f"(s) andando, os motores mostram 1000 Hz: {pw[40:140]}")
 d, _ = servo_diag(["--servo-dead"])
 fails += not ok(d and len({round(x or 0) for x in d["cm"]}) == 1 and d["hz"] == 50,
                 f"(s) servo que nao gira (fio): mesma distancia em todos os angulos, PWM ok -> problema fisico {d and d['cm']}")
 d, pw = servo_diag(["--servo-nopwm"])
-fails += not ok(d and d["hz"] == 0 and "ERRO sem PWM: GPIO18" in pw, f"(s) PWM do servo nao configurado: hz=0 e ERRO no log ({pw[-40:]})")
+fails += not ok(d and d["hz"] == 0 and "ERRO sem PWM: GPIO4" in pw, f"(s) PWM do servo nao configurado: hz=0 e ERRO no log ({pw[-40:]})")
 tr, o = run(AUTO + [(6000, dline("servo"))], SV, t_end=8000)
 fails += not ok(any(d.get("erro") for d in diags(o) if d["teste"] == "servo"), "(s) teste do servo com o carro andando: recusado (a FSM mexe no servo)")
 tr, o = run(AUTO, [*SV, "--obst", 6000, 25, "--servo-dead"], t_end=12000)
