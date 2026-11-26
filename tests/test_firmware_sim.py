@@ -15,7 +15,7 @@ def test_firmware_scenarios_in_simulator():
         print("SKIP  firmware no simulador: g++ nao encontrado")
         return
     exe = "sim3.exe" if os.name == "nt" else "sim3"
-    r = subprocess.run([gxx, "-std=c++17", "-DESP_ARDUINO_VERSION_MAJOR=3", "-I.", "-o", exe, "sim.cpp"],
+    r = subprocess.run([gxx, "-std=c++17", "-O1", "-static", "-DESP_ARDUINO_VERSION_MAJOR=3", "-I.", "-o", exe, "sim.cpp"],
                        cwd=SIM, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2000:]
     r = subprocess.run([sys.executable, "check_firmware.py"], cwd=SIM, capture_output=True, text=True)

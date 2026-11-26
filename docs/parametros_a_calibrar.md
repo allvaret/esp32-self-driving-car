@@ -61,7 +61,11 @@ Convenções: tempos em **segundos** (nunca ticks); `v` e `steer` são **normali
 | `control.stop_s` | 0,3 s | DEMO | Tempo para o carro parar de fato. Usar a frenagem medida. |
 | `control.reverse_s` | 0,5 s (×1,5 sem saída) | DEMO | Derivar com `derive_maneuver_times(cfg, reverse_m, turn_deg)` a partir de `speed_at_v_rev_mps`. |
 | `control.turn_s` | 1,0 s | DEMO | **Só o controller v1 congelado** (tempo fixo). O firmware não usa mais `turn_ms`: gira até o ângulo (yaw) ou `ângulo / turn_dps`. |
-| `control.avoid_retries` | 2 | DEMO | Quantas vezes tentar de novo (ré maior + nova olhada) antes do PRESO. |
+| `control.avoid_retries` | 2 | DEMO | Sem saída: quantas vezes dar ré pelo crédito e olhar de novo antes da fuga. |
+| **`control.cred_max`** (firmware `cred_max`) | 1,0 v·s | DEMO | Teto do crédito de ré (0.6.0). O crédito é `v·s` do comando base em reta, não distância real: depende da faixa por roda estar aplicada. Ver `cred` no `state` depois de uma reta conhecida. |
+| `control.cred_psi_tol_deg` | 35° | DEMO | Até quanto o rumo pode ter mudado para a ré ainda "voltar pelo caminho". Maior = ré mais ousada depois de curvas. |
+| `control.cred_min_s` | 0,15 s | DEMO | Abaixo disso não dá ré: gira direto. |
+| `control.escape_deg` / `escape_max` | 90° / 4 | DEMO | Fuga no "sem saída" (sempre o mesmo lado) e quantas antes do PRESO. 4 × 90° = uma volta. |
 | `control.clear_s` | 0,2 s | HIPÓTESE | Tempo "limpo" para voltar a FRENTE (equivale a 3 ticks a 10 fps). Revisar com o fps real do S9. |
 | `control.guard_window_s / guard_max_episodes / guard_backoff_s` | 20 s / 2 / (1, 2, 4) s | DEMO | Testar com uma pessoa atravessando à frente do carro; ajustar para o tempo típico de passagem. |
 | `control.edge_near_h / edge_cov_min` | 0,20 / 0,50 | HIPÓTESE | Só validado no vídeo da parede 1 (rodapé de alto contraste). Parede 2 não detectada. |

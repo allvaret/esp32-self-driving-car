@@ -26,6 +26,8 @@ static int g_pwm_pin[64];       // duty por pino (nos dois cores), bruto
 static int g_bits[64];          // resolucao do PWM por pino (0 = nao configurado: 8)
 static int g_chbits[16];
 static int g_ch2pin[16];
+static uint32_t g_hz[64];       // frequencia do PWM por pino (0 = sem PWM)
+static uint32_t g_chhz[16];
 static float duty8(int pin) {   // duty na escala 0..255, qualquer resolucao
   int b = g_bits[pin] ? g_bits[pin] : 8;
   return (float)g_pwm_pin[pin] * 255.0f / (float)((1 << b) - 1);
@@ -63,7 +65,17 @@ static float wheelU(int en, int ina, int inb, float eff, float dz, bool noPwm = 
   return dir * (u > 0 ? u : 0);
 }
 
+// --deadend DEG: beco. A partir de --obst T CM TODAS as direcoes leem CM (parede em volta) ate o carro girar DEG graus
+// (W_psi, o rumo fisico) em relacao ao rumo de quando o beco apareceu; dai em diante o caminho fica aberto (300 cm).
+static float W_dead_deg = 0;
+static bool W_dead_have = false, W_dead_open = false;
+static double W_dead_psi0 = 0;
 static float simCm(float deg, uint32_t ms) {
+  if (W_dead_deg > 0 && ms >= W_t_obst) {
+    if (!W_dead_have) { W_dead_have = true; W_dead_psi0 = W_psi; }
+    if (!W_dead_open && std::fabs(W_psi - W_dead_psi0) >= W_dead_deg) W_dead_open = true;
+    return W_dead_open ? 300.0f : W_obst_cm;
+  }
   int b = (int)lroundf(deg / 15.0f) + 2;
   b = b < 0 ? 0 : (b > 4 ? 4 : b);
   float cm = W_bin[b];
@@ -74,9 +86,19 @@ static float simCm(float deg, uint32_t ms) {
 void pinMode(int, int) {}
 void digitalWrite(int p, int v) { g_pin[p] = v; }
 int digitalRead(int p) { return p == PIN_BTN ? g_btn : g_pin[p]; }
+// ---- servo do sensor FISICO: o angulo sai do PWM no pino do servo (50 Hz, 16 bits), NAO da variavel do firmware ----
+// --servo-dead: o servo nao gira (fio/alimentacao): o sensor fica sempre a 0 grau, com PWM normal no pino.
+// --servo-nopwm: o PWM do pino do servo nao configura (ledcAttach falha).
+static bool W_servoDead = false, W_servoNoPwm = false;
+static float physServoDeg() {
+  if (W_servoDead || g_hz[PIN_SENSOR_SERVO] == 0) return 0.0f;
+  float us = (float)g_pwm_pin[PIN_SENSOR_SERVO] * 20000.0f / 65535.0f;
+  if (us < 400.0f) return 0.0f;                                         // sem pulso: o servo nao sai do lugar
+  return SENSOR_SERVO_SIGN * (us - SERVO_CENTER_US) / SERVO_US_PER_DEG;
+}
 unsigned long pulseIn(int, int, unsigned long timeout) {
   uint32_t ms = millis();
-  float cm = simCm(servoDeg, ms);
+  float cm = simCm(physServoDeg(), ms);
   if (ms >= W_none_t0 && ms < W_none_t1) cm = 1e9;
   if (ms >= W_far_t0 && ms < W_far_t1) cm = 1e9;                      // objeto "invisivel" (perna fina)
   float us = cm * 58.3f;
@@ -85,12 +107,21 @@ unsigned long pulseIn(int, int, unsigned long timeout) {
   return (unsigned long)us;
 }
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-bool ledcAttach(uint8_t pin, uint32_t, uint8_t bits) { g_bits[pin] = bits; return true; }
-bool ledcWrite(uint8_t pin, uint32_t duty) { g_pwm_pin[pin] = (int)duty; return true; }
+bool ledcAttach(uint8_t pin, uint32_t hz, uint8_t bits) {
+  if (W_servoNoPwm && pin == PIN_SENSOR_SERVO) return false;
+  g_bits[pin] = bits; g_hz[pin] = hz; return true;
+}
+bool ledcAttachChannel(uint8_t pin, uint32_t hz, uint8_t bits, uint8_t) { return ledcAttach(pin, hz, bits); }
+bool ledcWrite(uint8_t pin, uint32_t duty) { if (!g_hz[pin]) return false; g_pwm_pin[pin] = (int)duty; return true; }
+uint32_t ledcReadFreq(uint8_t pin) { return g_hz[pin]; }
 #else
-double ledcSetup(uint8_t ch, double, uint8_t bits) { g_chbits[ch] = bits; return 0; }
-void ledcAttachPin(uint8_t pin, uint8_t ch) { g_ch2pin[ch] = pin; g_bits[pin] = g_chbits[ch]; }
+double ledcSetup(uint8_t ch, double hz, uint8_t bits) { g_chbits[ch] = bits; g_chhz[ch] = (uint32_t)hz; return hz; }
+void ledcAttachPin(uint8_t pin, uint8_t ch) {
+  if (W_servoNoPwm && pin == PIN_SENSOR_SERVO) return;
+  g_ch2pin[ch] = pin; g_bits[pin] = g_chbits[ch]; g_hz[pin] = g_chhz[ch];
+}
 void ledcWrite(uint8_t ch, uint32_t duty) { g_pwm_pin[g_ch2pin[ch]] = (int)duty; }
+double ledcReadFreq(uint8_t ch) { return g_chhz[ch]; }
 #endif
 int SerialStub::available() { return (int)g_in.size(); }
 int SerialStub::read() { if (g_in.empty()) return -1; char c = g_in.front(); g_in.pop_front(); return (unsigned char)c; }
@@ -121,6 +152,7 @@ int main(int argc, char** argv) {
     if (a == "--t-end") t_end = (uint32_t)atoi(argv[++i]);
     else if (a == "--obst") { f(W_t_obst); f(W_obst_cm); }
     else if (a == "--clear") f(W_t_clear);
+    else if (a == "--deadend") f(W_dead_deg);
     else if (a == "--left") { float x; f(x); W_bin[0] = W_bin[1] = x; }
     else if (a == "--right") { float x; f(x); W_bin[3] = W_bin[4] = x; }
     else if (a == "--ang") { float d, x; f(d); f(x); int b = (int)lroundf(d / 15.0f) + 2; if (b >= 0 && b <= 4) W_bin[b] = x; }
@@ -134,6 +166,8 @@ int main(int argc, char** argv) {
     else if (a == "--wheel-left") { f(W_effL); f(W_dzL); }
     else if (a == "--wheel-right") { f(W_effR); f(W_dzR); }
     else if (a == "--nopwm-left") W_noPwmL = true;
+    else if (a == "--servo-dead") W_servoDead = true;
+    else if (a == "--servo-nopwm") W_servoNoPwm = true;
     else if (a == "--ws") g_ws_clients = atoi(argv[++i]);
     else if (a == "--input") inFile = argv[++i];
     else if (a == "--set") { std::string k = argv[++i]; float v = (float)atof(argv[++i]);
@@ -170,12 +204,12 @@ int main(int argc, char** argv) {
       g_in.push_back('\n'); yawQ.pop_front(); }
     if (cst != pc || sub != ps || (int)armed != pa) { printf("EV %u cst=%d sub=%d subn=%s armed=%d psi=%.2f why=%s\n", millis(), cst, sub, SUBN[sub], armed, W_psi, why); pc = cst; ps = sub; pa = armed; }
     if (millis() >= next_tr) { next_tr = millis() + 100;
-      printf("TR %u armed=%d mode=%d cst=%d sub=%d subn=%s curL=%.3f curR=%.3f servo=%.1f center=%.1f cls=%d delegated=%d psi=%.1f "
-             "enaPWM=%.0f enbPWM=%.0f in1=%d in2=%d in3=%d in4=%d steerPWM=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f hold=%d hc=%.3f trim=%.3f\n",
-             millis(), armed, mode, cst, sub, SUBN[sub], curL, curR, servoDeg, centerCm, haveC ? centerClass(millis()) : -1, (int)delegated, W_psi,
+      printf("TR %u armed=%d mode=%d cst=%d sub=%d subn=%s curL=%.3f curR=%.3f servo=%.1f phys=%.1f center=%.1f cls=%d delegated=%d psi=%.1f "
+             "enaPWM=%.0f enbPWM=%.0f in1=%d in2=%d in3=%d in4=%d rtcArmed=%u rtcMode=%u rtcGoal=%s netGoal=%s netSrc=%s ang=%.0f haveAng=%d avoidN=%d guardLevel=%d uL=%.3f uR=%.3f rate=%.1f hold=%d hc=%.3f trim=%.3f cred=%.3f esc=%d\n",
+             millis(), armed, mode, cst, sub, SUBN[sub], curL, curR, servoDeg, physServoDeg(), centerCm, haveC ? centerClass(millis()) : -1, (int)delegated, W_psi,
              duty8(PIN_ENA), duty8(PIN_ENB),
-             g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4], g_pwm_pin[PIN_STEER_SERVO],
-             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate, holdMode, holdCorr, holdTrim); }
+             g_pin[PIN_IN1], g_pin[PIN_IN2], g_pin[PIN_IN3], g_pin[PIN_IN4],
+             (unsigned)rtcArmed, (unsigned)rtcMode, rtcGoal[0] ? rtcGoal : "-", netGoal, netSrc, chosenAng, (int)haveAng, avoidN, guardLevel, W_uL, W_uR, W_rate, holdMode, holdCorr, holdTrim, credRevMs(millis()) / 1000.0f, escN); }
   }
   for (auto& kv : g_nvs) printf("NVS %s=%.4f\n", kv.first.c_str(), kv.second);
   printf("NVSW %d\n", g_nvs_writes);

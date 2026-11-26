@@ -86,9 +86,9 @@ Com visão fresca ela decide (livre ou suspeito); sem visão decide o histórico
 Nota: eco válido = cm; sem eco = **visão fresca do setor** (livre → `max_range_cm`, bloqueado → `d_stop/2`), senão `none_score_cm` (45).
 Escolhe o **melhor ângulo**; empate → menor |ângulo|, depois esquerda. `scan/decide` registra ângulo e notas.
 A sugestão `avoid deg` é varrida primeiro e **aceita de imediato** se a nota ≥ `d_clear_cm` (sem veto do sensor); com eco válido < `d_stop` ela é vetada e a varredura segue.
-Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `avoid_retries`), depois PRESO.
+Nenhum ângulo ≥ `d_stop`: "sem saída" → ré pelo **crédito** e olha de novo (até `avoid_retries`), depois **fuga** de `escape_deg` (90°) sempre para o mesmo lado; PRESO só depois de `escape_max` (4) fugas sem andar livre. Crédito de ré: `docs/protocolo_ws.md`.
 
-**Curva até o ângulo**: com `yaw` fresco (psi extrapolado entre amostras), gira até `Δpsi ≥ |alvo| − r·yaw_lead_ms`; faltando menos de `turn_slow_deg` (25°), `v_turn` e `s` caem proporcionais ao erro (mínimo `turn_k_min` = 0,35). Timeout `1,5·|alvo|/turn_dps + 0,3 s + turn_slow_deg/(turn_dps·turn_k_min)`; sem yaw, `|alvo| / turn_dps`. 300 ms depois: `{"t":"turn","alvo","girou","erro"}`. Ré: `reverse_ms = 500` (×1,5 sem saída).
+**Curva até o ângulo**: com `yaw` fresco (psi extrapolado entre amostras), gira até `Δpsi ≥ |alvo| − r·yaw_lead_ms`; faltando menos de `turn_slow_deg` (25°), `v_turn` e `s` caem proporcionais ao erro (mínimo `turn_k_min` = 0,35). Timeout `1,5·|alvo|/turn_dps + 0,3 s + turn_slow_deg/(turn_dps·turn_k_min)`; sem yaw, `|alvo| / turn_dps`. 300 ms depois: `{"t":"turn","alvo","girou","erro"}`. Ré: `min(reverse_ms = 500, crédito)`; sem crédito (< `cred_min_ms`) gira direto, sem ré cega.
 
 **ESPERA e guarda de reentrada**:
 - 3º desvio em 20 s ⇒ ESPERA (1, 2, 4 s). **Ao fim da ESPERA, se a condição persiste, faz a manobra completa** (PARADA → varredura), não outra ESPERA. "Persiste" = mediana < `d_stop`, suspeito, ou (desvio pedido pelo celular) a visão segue com o centro bloqueado / chegou outro `avoid` durante a espera, sem o sensor refutar. Antes, no modo visão, o ciclo avoid → ESPERA → devolve ao celular → avoid se repetia (35 s sem manobra no log de 20/11; simulado: 7 ESPERA e 2 manobras em 40 s → agora 1 ESPERA e 19 manobras).
@@ -117,6 +117,10 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `av
 | Diagnóstico 21/11: em v = 0,35 (duty 137) a roda direita quase não anda | faixa de duty **por roda** medida pelo teste por roda (visor sugere e aplica, NVS) |
 | Modelo do carro de 21/11: ganhos 0,01/0,05 oscilam | `hold_kp`/`hold_ki` = 0,0015/0,015 e PWM dos motores em 10 bits |
 | Campo 21/11 (0.5.1): faixa sugerida 64..89 / 106..131 e o reto **piorou** (+230..260°/s); com correção, 197°/s | o ajuste usava os degraus do teto da esquerda (~395°/s) e os degraus subindo de 300 ms mediam a aceleração. 0.5.2: degraus descendo de 600 ms com `dr` e `minimo`, ajuste sem o teto, aviso de roda que não obedece o PWM. A esquerda anda bem mais que a direita com o mesmo duty: motor/caixa ou PWM, a separar no próximo teste |
+| Campo 22/11 (0.5.2): degraus descendo — roda esquerda ~374°/s em **qualquer** duty (45..220), direita obedece; GPIO19 medido em ~3 V parado (fio solto), ENA do módulo 0 V | **erro de código**: no core 3.x o `ledcAttach` escolhe o canal sozinho; sem o servo de direção, o ENA caía no canal 1, que divide o timer 0 com o servo (50 Hz/16 bits) e não recebia o PWM. 0.5.3: `ledcAttachChannel` com canais explícitos (0 = servo, 2/3 = motores). Provavelmente também era o "defeito" dos pinos 25/26/27. Código do servo de direção (`STEER_SERVO`, nunca usado) removido: o carro é só diferencial |
+| Campo 22/11 (0.5.3): mesmo com os canais explícitos, a esquerda segue em ~380–400°/s de 220 a 45; no Explorar visão começa reto e vira à direita (L 0,15 × R 0,9, +146°/s) | o canal não era a (única) causa: **GPIO19 com defeito**. 0.5.4: `PIN_ENA 13` (passar o fio do ENA para o GPIO13) |
+| Campo 23/11 (0.5.4): ENA no GPIO13 resolveu (esquerda para em ~120 como a direita). No Explorar visão o carro ficou PRESO num canto: sem eco + visão bloqueada nas 4 direções, ré fixa de 0,75 s e só ±30° de varredura | 0.6.0: **crédito de ré** (fila de trechos retos `{psi, v·s}`; a ré cega só volta pelo caminho percorrido) e **fuga** de 90° para fora do cone, sempre para o mesmo lado (não 180°, que vira vai-e-vem); PRESO só depois de 4 fugas. Simulado: beco abre em 60° → sai; beco fechado → 4 fugas ao mesmo lado → PRESO. Também: a faixa por roda ainda não foi aplicada (trim foi a +0,37) |
+| Campo 26/11 (0.6.0): o crédito de ré funcionou (`cred` 1,25 s → ré → 0, depois gira direto), mas o carro quase só fazia "sem saída: fuga". **O sensor não gira desde 23/11**: em toda varredura de 23/11 e 26/11 as 4 direções leem a **mesma** distância (ex. 26,4 / 26,4 / 26,4 / 26,4); em 20–21/11 (0.5.2) variavam (46 / 47 / 65 / 67). O firmware manda o servo (`aim` −15/−30/+15/+30 no diário). No Explorar visão de 10:34 a câmera não calibrou: o celular estava desconectado no clique e o `calibrar` se perdeu (o ESP32 reenvia só o `goal`); na fonte sensor o visor nunca mandava `calibrar` | 0.6.1: o código do servo é o mesmo da 0.5.2, exceto o `ledcAttachChannel` da 0.5.3. Pelo fonte do core 3.3.12, o timer é escolhido por frequência/resolução nos dois casos (não era a causa da roda), mas por segurança **volta o `ledcAttach` da 0.5.2**. Novo: cada cliente recebe `pwm: servo GPIO18 50 Hz…` (frequência real) e o visor tem **Servo do sensor** (−60..+60, sem armar), que diz se o sensor girou. O sim agora lê o ângulo do **PWM** do pino do servo (`--servo-dead`, `--servo-nopwm`). Suspeita principal: o **fio do GPIO18**, vizinho do 19 que foi mexido em 22/11. Brain: goal `explorar` novo com o carro parado reaprende o chão (as duas fontes), sem depender do `calibrar` |
 | Campo 21/11 (0.5.1): a correção sobe a roda certa, sem oscilar, e o trim aprende para o lado certo (−0,8) | ok; falta autoridade enquanto as rodas estiverem tão diferentes |
 | Log 20/11 (2): correção de rumo não atuava | saiu do brain; roda no ESP32 nos dois modos, desde a arrancada, autoridade ±2,0 (até `hold_pwm_max`), trim persistente |
 | Log 20/11 (3): ciclo avoid → ESPERA de 35 s com 86 cm válidos | sensor refuta a visão (brain e ESP32); fim da ESPERA com a condição persistente ⇒ manobra completa |
@@ -126,8 +130,15 @@ Nenhum ângulo ≥ `d_stop`: "sem saída" → ré ×1,5 e olha de novo (até `av
 
 ## 7. Checklist de teste de campo (na ordem)
 
-Antes de tudo: gravar o firmware **0.5.2** (o app não mudou desde a 0.5.1), app aberto e conectado (o yaw vem dele).
-No visor, **Gravar log** ligado o tempo todo.
+Antes de tudo: gravar o firmware **0.6.1** (fio do ENA no **GPIO13**; aplicar a faixa das rodas e zerar o trim no passo 0) e o app (o brain mudou: reaprende o chão em todo Explorar novo); app aberto e conectado (o yaw vem dele).
+No visor, **Gravar log** ligado o tempo todo. Ao abrir o visor, o log mostra `car_firmware 0.6.1 | pwm: servo GPIO18 50 Hz, ENA GPIO13 1000 Hz, ENB GPIO32 1000 Hz`; 0 Hz ou `ERRO sem PWM` = pare e mande o log.
+
+**00. Servo do sensor (desarmado, antes de tudo).** Mão (ou caixa) a ~30 cm só do lado ESQUERDO do carro, botão
+**Servo do sensor**. Olhe o sensor: tem que ir à esquerda, centro, direita e voltar (~5 s). O visor mostra a distância
+por ângulo: −60/−30 perto (a mão), 0/+30/+60 longe ou "sem eco". "Distâncias IGUAIS" = o sensor não girou: com o
+carro desligado, confira o fio de **sinal** do servo no **GPIO18** (vizinho do antigo 19, mexido em 22/11), o **5 V** e o **GND** do servo
+(servo sem 5 V não gira e às vezes treme). Sem o servo, o carro ainda anda, mas só olha para a frente (toda varredura
+vira "sem saída" → fuga de 90°).
 
 **0. Diagnóstico pelo visor (carro no chão, ~1,5 m livre em volta).** Seção **Diagnóstico** do `http://192.168.4.1`:
    1. **Armar parado (4 s)**: o estado vira `DIAG / parado` e o carro **não** anda. Chip `giro ok` aceso.

@@ -325,3 +325,25 @@ def test_yaw_integrator_unbounded_and_bias():
     yi.reset(full=True)
     assert yi.psi == 0.0 and yi.bias == 0.0
     print(f"ok  YawIntegrator: psi sem limite ({psi:.0f} graus), vies estimado parado")
+
+
+def test_new_explore_recalibrates_once_even_without_calibrar():
+    lk, clk = _setup("explorar", "sensor", armed=False)
+    brain._calib_seen, brain._calib_pending, brain._calib_t = 0, False, -1e9
+    brain.step(_info())                            # goal novo, carro armando (parado), sem "calibrar" do visor
+    assert brain.pop_calibrate() is True and brain.pop_calibrate() is False
+    lk.calib_seq += 1                              # visor: "calibrar" + goal (clique em Explorar visao)
+    lk.src = "visao"
+    clk.adv(0.5)
+    assert brain.pop_calibrate() is True           # o "calibrar" vem antes do goal: 1 calibracao...
+    brain.step(_info())
+    assert brain.pop_calibrate() is False          # ...e o goal novo logo depois nao calibra de novo
+    lk.conn_seq += 1                               # reconexao com o mesmo goal: nao recalibra
+    clk.adv(5.0)
+    brain.step(_info())
+    assert brain.pop_calibrate() is False
+    lk.goal = "parar"; clk.adv(0.2); brain.step(_info())
+    lk.goal, lk.src, lk.state = "explorar", "visao", {"armed": True, "st": "FRENTE", "L": 0.3, "R": 0.3}
+    clk.adv(0.2); brain.step(_info())             # goal novo com o carro ja ANDANDO: nao calibra
+    assert brain.pop_calibrate() is False
+    print("ok  Explorar novo com o carro parado reaprende o chao 1 vez (sem depender do 'calibrar'); andando ou reconexao, nao")

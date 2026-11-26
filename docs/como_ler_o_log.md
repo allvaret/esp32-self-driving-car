@@ -66,6 +66,8 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 | `hold` | correção de rumo: `0` = fora de reta (parado, curva, ré), `1` = só o trim aprendido (sem yaw fresco), `2` = corrigindo com o giroscópio |
 | `hc` | correção aplicada agora (unidades de roda; > 0 = mais força na esquerda). Colada em ±2,0 = sem autoridade |
 | `trim` | trim aprendido (persiste entre trechos e na NVS). Deve mudar pouco de uma corrida para a outra |
+| `cred` | credito de re: quantos segundos de re (a `v_rev`) o caminho ja percorrido em reta garante (0.6.0). Cresce andando reto, cai na re, zera depois de girar muito |
+| `esc` | fugas seguidas (sem saida -> giro de 90 graus); volta a 0 quando o carro anda livre de novo. Em `escape_max` (4) = PRESO |
 | `why` | motivo da decisão atual (ex.: "visao refutada pelo sensor (86 cm)") |
 | `up` | segundos desde que o ESP ligou (se diminuir, ele reiniciou) |
 | `rst` | motivo do último reinício: `LIGOU` normal, `WDT` travou e o watchdog reiniciou, `BROWNOUT` queda de tensão |
@@ -94,7 +96,7 @@ Cada linha é um registro em JSON. O campo **`k`** diz o tipo; o campo **`w`** �
 
 | Campo | Significado |
 |---|---|
-| `teste` | `dir` / `esq` (gira no lugar 1 s, `v = 0`, `s = ±1`), `reto` (2 s, sem correção nem trim), `reto_corr` (2 s, com correção), `roda_esq` / `roda_dir` (ver abaixo), `zerar_trim` |
+| `teste` | `dir` / `esq` (gira no lugar 1 s, `v = 0`, `s = ±1`), `reto` (2 s, sem correção nem trim), `reto_corr` (2 s, com correção), `roda_esq` / `roda_dir` (ver abaixo), `servo` (0.6.1: `deg`, `cm` por ângulo — `null` sem eco, `-1` sem leitura —, `us` pedido, `hz` PWM real; distâncias iguais = o sensor não girou), `zerar_trim` |
 | `L`, `R` | comando médio de cada roda na 2ª metade do teste |
 | `psi` | graus girados no teste (+ = direita); `null` = sem yaw do celular |
 | `rate_med` | giro mediano na 2ª metade (graus/s). No `reto` sem correção, é o quanto o carro puxa; no `dir`, ≈ giro no lugar |

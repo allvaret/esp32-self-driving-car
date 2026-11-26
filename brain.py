@@ -66,6 +66,9 @@ _armed_prev = False
 _moving_prev = False             # goal de movimento no quadro anterior (zera o rumo so na transicao)
 _last_think_t = _last_viz_t = _last_vis_t = _last_yaw_t = _last_avoid_t = 0.0
 _calib_seen = 0
+_calib_pending = False           # goal "explorar" novo com o carro parado: reaprende o chao (mesmo sem o "calibrar")
+_calib_t = -1e9                  # ultima calibracao entregue ao app (evita calibrar 2x no mesmo clique)
+CALIB_DEDUP_S = 3.0
 _last_vis = {"ok": False, "s": None, "state": None, "conf": None}
 _oversize = 0                    # mensagens descartadas por passarem de MAX_MSG (deve ficar em 0)
 _yaw = YawIntegrator(Config().heading)        # psi sem limite para o ESP32 (sempre): curvas e rumo em reta
@@ -169,14 +172,17 @@ def on_gyro(rate_dps):
 
 
 def pop_calibrate():
-    """Kotlin, a cada frame: True UMA vez por comando "calibrar" vindo do visor.
-    O app entao chama StreamRunner.recalibrate(); enquanto calibra, info.ok = False (o ESP32 ignora)."""
-    global _calib_seen
+    """Kotlin, a cada frame: True UMA vez por comando "calibrar" vindo do visor OU por goal "explorar" novo com o
+    carro desarmado (o "calibrar" se perde se o celular estava desconectado no clique, o ESP32 so reenvia o goal; e a
+    fonte sensor nunca mandava "calibrar"). O app chama StreamRunner.recalibrate(); enquanto calibra, info.ok = False."""
+    global _calib_seen, _calib_pending, _calib_t
     with _lock:
         link = _link
-        if link is None or link.calib_seq == _calib_seen:
+        if link is None or (link.calib_seq == _calib_seen and not _calib_pending):
             return False
         _calib_seen = link.calib_seq
+        _calib_pending = False
+        _calib_t = _clock()
         _send({"t": "think", "msg": "calibrar: aprendendo a cor do chao"})
         return True
 
@@ -253,6 +259,7 @@ def _resolve(link):
 def step(estado, conf=None, msg=None):
     """Chamar a cada frame (depois da visao). Retorna (v, s) enviado em src=visao, senao (0, 0)."""
     global _armed_prev, _moving_prev, _last_key, _last_conn_seq, _last_state, _last_think_t, _last_viz_t, _last_vis_t, _last_avoid_t
+    global _calib_pending
     with _lock:
         link = _link
         if link is None or not link.connected:
@@ -281,6 +288,8 @@ def step(estado, conf=None, msg=None):
         # motivacao ou fonte nova -> so manda o MODE (quem arma e o ESP32)
         key = (goal, src)
         if goal in GOALS_MOVE and (key != _last_key or link.conn_seq != _last_conn_seq):
+            if key != _last_key and not armed and now - _calib_t > CALIB_DEDUP_S:
+                _calib_pending = True        # motivacao nova com o carro parado (armando): reaprende o chao
             _last_key, _last_conn_seq = key, link.conn_seq
             _send({"t": "mode", "m": SRC_TO_MODE[src]})
             _send({"t": "think", "msg": f"motivacao '{goal}' fonte '{src}'"})

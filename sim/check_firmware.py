@@ -1,7 +1,7 @@
 """check_firmware.py - cenarios de verificacao do car_firmware.ino no simulador (sem hardware).
 
 Compile antes:
-    cd sim && g++ -std=c++17 -DESP_ARDUINO_VERSION_MAJOR=3 -I. -o sim3 sim.cpp
+    cd sim && g++ -std=c++17 -O1 -static -DESP_ARDUINO_VERSION_MAJOR=3 -I. -o sim3 sim.cpp   (-static: sem ele o exe pode carregar a libstdc++ do Git e travar)
 Rode:  python check_firmware.py        (sai com codigo 1 se algo falhar)
 
 Mundo do simulador (sim.cpp): sensor por angulo (-30,-15,0,+15,+30 graus), obstaculo temporario no centro
@@ -534,6 +534,52 @@ raw = reto_corr_series(["--set", "hold_kp", 0, "--set", "hold_ki", 0, "--set", "
 both = reto_corr_series([], n=2, pre=[(4500, cfg)])
 fails += not ok(abs(raw[0][0]) < 10 and all(abs(m) < 5 and sd < 10 for m, sd in both),
                 f"(q) com a faixa por roda sugerida {sug}: reto SEM correcao {raw[0][0]:+.1f} graus/s; com correcao {both}")
+
+# ===== (r) credito de re (0.6.0): a re cega so volta pelo caminho ja percorrido; beco -> fuga de 90 graus =====
+def rev_spans():                                  # (inicio, fim) de cada RE pelos eventos
+    e = LAST["ev"]; return [(a["t"], b["t"]) for a, b in zip(e, e[1:]) if a["subn"] == "RE"]
+tr, o = run(AUTO, ["--obst", 4700, 25, "--left", 200, "--right", 40, "--yaw"], t_end=9000)
+rs = rev_spans()
+fwd = sum(float(r["curL"]) * 0.1 for r in tr if r["cst"] == "0" and float(r["curL"]) > 0)       # v*s para frente (TR a 100 ms)
+rev = sum(-float(r["curL"]) * 0.1 for r in tr if r["subn"] == "RE" and float(r["curL"]) < 0)    # v*s de re
+fails += not ok(rs and 0 < rev <= fwd * 1.15 + 0.02, f"(r) a re anda no maximo o que andou para frente (credito): re {rev:.3f} x frente {fwd:.3f} v*s")
+fails += not ok(len(rs) == 1, f"(r) sem credito na 2a manobra: gira direto, sem re ({len(rs)} re)")
+tr, o = run(AUTO, ["--deadend", 60, "--obst", 8000, 25, "--yaw"], t_end=30000)
+fuga = evs(why="fuga")
+fails += not ok(fuga and not evs(subn="PRESO"), f"(r) beco: re pelo credito e fuga de 90 graus em vez de PRESO ({fuga[0]['why'] if fuga else '-'})")
+fails += not ok(at(tr, 29000)["cst"] == "0" and float(at(tr, 29000)["curL"]) > 0.3, "(r) beco: depois da fuga volta a andar (FRENTE)")
+rs = rev_spans()
+fails += not ok(rs and all(b - a <= 1700 for a, b in rs), f"(r) re pelo credito nunca passa de max_rev_ms ({[b - a for a, b in rs]} ms)")
+tr, o = run(AUTO, ["--deadend", 400, "--obst", 8000, 25, "--yaw"], t_end=60000)
+lados = {e["why"].split()[3][0] for e in evs(why="fuga")}
+fails += not ok(len(evs(why="fuga")) == 4 and len(lados) == 1 and evs(subn="PRESO"),
+                f"(r) beco sem saida: 4 fugas, todas para o MESMO lado {lados}, depois PRESO")
+tr, o = run(AUTO, ["--deadend", 60, "--obst", 8000, 25], t_end=30000)
+fails += not ok(fuga and at(tr, 29000)["cst"] == "0", "(r) beco sem yaw: a fuga gira por tempo (turn_dps) e sai")
+
+# ===== (s) servo do sensor (0.6.1): o sim le o angulo do PWM do pino do servo (fisico), nao do firmware =====
+# Campo 23/11 e 26/11: a varredura lia a MESMA distancia nos 4 angulos (o servo nao girava); em 20-21/11 variava.
+SV = ["--ang", -30, 40, "--ang", -15, 60, "--ang", 0, 120, "--ang", 15, 75, "--ang", 30, 90]
+def servo_diag(args, pre=(), t_end=7000):
+    tr, o = run(list(pre) + [(1000, "@ws_connect"), (1500, dline("servo"))], [*SV, *args], t_end=t_end)
+    sv = [d for d in diags(o) if d["teste"] == "servo"]
+    pw = [txt for _, _, txt in LAST["ws"] if "pwm:" in txt]
+    return (sv[0] if sv else None), (pw[0] if pw else "")
+d, pw = servo_diag([])
+fails += not ok(d and d["deg"] == [-60, -30, 0, 30, 60] and [round(x or 0) for x in d["cm"]] == [40, 40, 120, 90, 90] and d["hz"] == 50,
+                f"(s) teste do servo desarmado: cada angulo le o seu obstaculo {d and d['cm']} ({d and d['hz']} Hz)")
+fails += not ok("servo GPIO18 50 Hz" in pw and "ENA GPIO13 1000 Hz" in pw and "ENB GPIO32 1000 Hz" in pw and "ERRO" not in pw,
+                f"(s) cliente novo recebe a versao e a frequencia real de cada PWM: {pw[:140]}")
+d, _ = servo_diag(["--servo-dead"])
+fails += not ok(d and len({round(x or 0) for x in d["cm"]}) == 1 and d["hz"] == 50,
+                f"(s) servo que nao gira (fio): mesma distancia em todos os angulos, PWM ok -> problema fisico {d and d['cm']}")
+d, pw = servo_diag(["--servo-nopwm"])
+fails += not ok(d and d["hz"] == 0 and "ERRO sem PWM: GPIO18" in pw, f"(s) PWM do servo nao configurado: hz=0 e ERRO no log ({pw[-40:]})")
+tr, o = run(AUTO + [(6000, dline("servo"))], SV, t_end=8000)
+fails += not ok(any(d.get("erro") for d in diags(o) if d["teste"] == "servo"), "(s) teste do servo com o carro andando: recusado (a FSM mexe no servo)")
+tr, o = run(AUTO, [*SV, "--obst", 6000, 25, "--servo-dead"], t_end=12000)
+dd = decides(o)
+fails += not ok(dd and len(set(dd[0]["sc"])) == 1, f"(s) controle: servo parado na FSM reproduz o campo (notas iguais) {dd and dd[0]['sc']}")
 
 # ===== Python <-> firmware =====
 from control.hal import Drive, LinkDrive, LinkRangeHead, MemoryLink

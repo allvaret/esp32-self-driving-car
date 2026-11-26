@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.5.2
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.6.1
  *
  * CAMINHO 1: o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
  * a OPINIAO da visao ({"t":"vis"}) e o rumo do giroscopio ({"t":"yaw"}). Quem para, varre e desvia e este arquivo.
@@ -39,7 +39,7 @@
 #include <Preferences.h>        // NVS: guarda o trim aprendido do rumo entre desligamentos
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.5.2"
+#define FW_VERSION "car_firmware 0.6.1"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
@@ -56,7 +56,6 @@
 #define MOTOR_LEFT_INVERT 1     // roda ESQUERDA (ENA/IN1/IN2) gira ao contrario? ponha 1 (1 = sentido ja acertado no carro)
 #define MOTOR_RIGHT_INVERT 1    // roda DIREITA (ENB/IN3/IN4)
 #define SENSOR_SERVO_SIGN -1     // +graus = direita. Se o servo girar ao contrario, ponha -1
-#define STEER_SERVO_SIGN 1
 #define HEARTBEAT_MS 500        // linha {"t":"state"...} periodica (0 = desliga)
 
 // ================================ PINOS =====================================
@@ -65,7 +64,8 @@
 #define PIN_ECHO 22             // ATENCAO: ECHO do HC-SR04 e 5 V -> divisor 1k/2k ate este pino
 #define PIN_SENSOR_SERVO 18
 #define PIN_STEER_SERVO 4       // so no STEER_SERVO (nao usado no diferencial)
-#define PIN_ENA 19              // L298N: ENA (PWM) -> OUT1/OUT2 -> roda ESQUERDA. 25/26/27 com defeito nesta placa
+#define STEER_SERVO_SIGN 1
+#define PIN_ENA 13              // L298N: ENA (PWM) -> OUT1/OUT2 -> roda ESQUERDA. GPIO19 saiu (preso em ~3 V, 22/11)
 #define PIN_IN1 16              // RX2  (roda ESQUERDA)
 #define PIN_IN2 17              // TX2  (roda ESQUERDA)
 #define PIN_ENB 32              // L298N: ENB (PWM) -> OUT3/OUT4 -> roda DIREITA - retire o jumper do ENB
@@ -74,8 +74,8 @@
 #define PIN_BTN 0               // botao BOOT da placa (arma/desarma)
 #define PIN_LED 2               // LED da placa
 
-#define CH_SENSOR_SERVO 0       // canais LEDC (core 2.x): 0/1 = 50 Hz, 2/3 = PWM dos motores
-#define CH_STEER_SERVO 1
+#define CH_SENSOR_SERVO 0       // canais LEDC so no core 2.x (no 3.x o ledcAttach escolhe): 0 = servo 50 Hz, 2/3 = motores
+#define CH_STEER_SERVO 1        // so no STEER_SERVO
 #define CH_ENA 2
 #define CH_ENB 3
 
@@ -103,6 +103,10 @@ struct Params {
   // turn_dps = graus/s do carro com v_turn e s=1 (CALIBRAR): so vale sem yaw do celular.
   float scan_deg = 30, scan_step = 15, stop_ms = 300, reverse_ms = 500, turn_dps = 90, look_timeout_ms = 1000;
   float clear_ms = 200, avoid_retries = 2, settle_ms = 150;
+  // credito de re (odometria por tempo): v*s andados em reta com leitura livre = quanto de re CEGA e segura (volta pelo
+  // caminho ja percorrido). Vale so enquanto o rumo nao mudou mais que cred_psi_tol. Sem saida: re pelo credito, depois
+  // fuga de escape_deg para FORA do cone varrido, sempre para o mesmo lado (sem vai-e-vem); PRESO depois de escape_max.
+  float cred_max = 1.0f, cred_psi_tol = 35, cred_min_ms = 150, escape_deg = 90, escape_max = 4;
   // curva com yaw: faltando menos de turn_slow_deg, o giro cai proporcional ao erro (fator >= turn_k_min, para nao parar)
   float turn_slow_deg = 25, turn_k_min = 0.35f;
   // guarda de reentrada
@@ -144,6 +148,8 @@ static const KV PARAM_TABLE[] = {
   {"scan_deg", &P.scan_deg}, {"scan_step", &P.scan_step}, {"stop_ms", &P.stop_ms}, {"reverse_ms", &P.reverse_ms},
   {"turn_dps", &P.turn_dps}, {"look_timeout_ms", &P.look_timeout_ms}, {"clear_ms", &P.clear_ms},
   {"avoid_retries", &P.avoid_retries}, {"settle_ms", &P.settle_ms},
+  {"cred_max", &P.cred_max}, {"cred_psi_tol", &P.cred_psi_tol}, {"cred_min_ms", &P.cred_min_ms},
+  {"escape_deg", &P.escape_deg}, {"escape_max", &P.escape_max},
   {"turn_slow_deg", &P.turn_slow_deg}, {"turn_k_min", &P.turn_k_min},
   {"guard_window_ms", &P.guard_window_ms}, {"guard_max", &P.guard_max},
   {"backoff1_ms", &P.backoff1_ms}, {"backoff2_ms", &P.backoff2_ms}, {"backoff3_ms", &P.backoff3_ms},
@@ -205,9 +211,17 @@ static uint32_t tRefuteLog = 0;
 static float curL = 0, curR = 0;           // saida da roda ESQUERDA / DIREITA (rampa + correcao de rumo)
 static float rampL = 0, rampR = 0;         // comando base (v, s) depois da rampa, sem a correcao de rumo
 static uint32_t tLastApply = 0;
-static bool revActive = false;
-static uint32_t tRevStart = 0;
 static float lastSteerOut = 999;
+static bool revActive = false;
+// credito de re: fila de trechos retos {psi no inicio do trecho (NAN = sem yaw), credito v*s}; o mais novo no fim
+#define CRED_N 6
+#define CRED_SEG_DEG 10.0f                 // rumo que muda mais que isso abre um trecho novo
+struct CredSeg { float psi; float c; };
+static CredSeg credQ[CRED_N];
+static int credN = 0;
+static float revGoal = 0, revUsed = 0;    // re atual: quanto credito (v*s) ela deve andar e quanto ja andou
+static int escN = 0, escSide = 0;          // fugas (sem saida) seguidas e o lado delas (-1 esquerda, +1 direita, 0 livre)
+static uint32_t tRevStart = 0;
 
 // rumo em reta (holdStep)
 enum { H_OFF = 0, H_TRIM = 1, H_PI = 2 };   // fora de reta | so trim (sem yaw fresco ou arrancando) | malha fechada
@@ -297,12 +311,24 @@ static const char* RR[] = {"?", "LIGOU", "externo", "software", "PANIC", "wdt_in
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 static float absf(float x) { return x < 0 ? -x : x; }
 
+static char pwmErr[64] = "";                     // pinos cujo PWM nao configurou (vai no log de cada cliente novo)
+static void pwmFail(int pin) {
+  Serial.printf("ERRO: PWM nao configurado no pino %d\n", pin);
+  size_t n = strlen(pwmErr);
+  snprintf(pwmErr + n, sizeof(pwmErr) - n, "%sGPIO%d", n ? "," : "", pin);
+}
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-static void pwmAttach(int pin, int ch, int hz, int bits) { (void)ch; ledcAttach(pin, hz, bits); }
+// core 3.x: ledcAttach (canal automatico), como na 0.5.2, a ultima versao em que o servo comprovadamente girou.
+// A 0.5.3 trocou por ledcAttachChannel achando que o ENA dividia o timer do servo; no core 3.3.x o timer e escolhido
+// por frequencia/resolucao nos dois casos (servo 50 Hz/16 bits num timer, motores 1 kHz/10 bits em outro), e a roda
+// esquerda "sem PWM" era o GPIO19 com defeito (0.5.4: ENA no GPIO13). Volta ao que funcionou.
+static void pwmAttach(int pin, int ch, int hz, int bits) { (void)ch; if (!ledcAttach(pin, hz, bits)) pwmFail(pin); }
 static void pwmWrite(int pin, int ch, uint32_t duty) { (void)ch; ledcWrite(pin, duty); }
+static uint32_t pwmFreq(int pin, int ch) { (void)ch; return ledcReadFreq(pin); }   // frequencia real; 0 = pino sem PWM
 #else
 static void pwmAttach(int pin, int ch, int hz, int bits) { ledcSetup(ch, hz, bits); ledcAttachPin(pin, ch); }
 static void pwmWrite(int pin, int ch, uint32_t duty) { (void)pin; ledcWrite(ch, duty); }
+static uint32_t pwmFreq(int pin, int ch) { (void)pin; return (uint32_t)ledcReadFreq(ch); }
 #endif
 
 static void servoUs(int pin, int ch, float us) {
@@ -416,6 +442,12 @@ static void logDecide(float ang, bool noExit, uint32_t now) {     // angulo esco
 }
 
 static void onWsConnect(uint8_t num) {                   // todo cliente novo recebe o diario (reenviado: "replay":1)
+  char pw[200];                                          // e a frequencia REAL de cada PWM (0 Hz = pino sem PWM)
+  snprintf(pw, sizeof(pw), "{\"t\":\"log\",\"msg\":\"%s | pwm: servo GPIO%d %u Hz, ENA GPIO%d %u Hz, ENB GPIO%d %u Hz%s%s\"}",
+           FW_VERSION, PIN_SENSOR_SERVO, (unsigned)pwmFreq(PIN_SENSOR_SERVO, CH_SENSOR_SERVO), PIN_ENA,
+           (unsigned)pwmFreq(PIN_ENA, CH_ENA), PIN_ENB, (unsigned)pwmFreq(PIN_ENB, CH_ENB),
+           pwmErr[0] ? " | ERRO sem PWM: " : "", pwmErr);
+  ws.sendTXT(num, pw);
   uint32_t first = rtcEvSeq > EV_N ? rtcEvSeq - EV_N + 1 : 1;
   char buf[240];
   for (uint32_t n = first; n <= rtcEvSeq; n++) {
@@ -645,9 +677,58 @@ static void saveWheels() {                               // faixa de duty por ro
   emitf("{\"t\":\"log\",\"msg\":\"rodas (NVS): esq %.0f..%.0f dir %.0f..%.0f\"}", wheelLo(0), wheelHi(0), wheelLo(1), wheelHi(1));
 }
 
+// ---- credito de re ----
+static void credClear() { credN = 0; }
+static void credAdd(uint32_t now, float x) {             // x = v*dt andados em reta (comando base, depois da rampa)
+  float psi = yawFresh(now) ? yawPsiNow(now) : NAN;
+  CredSeg* last = credN > 0 ? &credQ[credN - 1] : NULL;
+  bool same = last && ((isnan(psi) && isnan(last->psi)) ||
+                       (!isnan(psi) && !isnan(last->psi) && absf(psi - last->psi) <= CRED_SEG_DEG));
+  if (!same) {
+    if (credN >= CRED_N) { for (int i = 1; i < CRED_N; i++) credQ[i - 1] = credQ[i]; credN = CRED_N - 1; }
+    credQ[credN].psi = psi; credQ[credN].c = 0; credN++;
+    last = &credQ[credN - 1];
+  }
+  last->c += x;
+  float tot = 0;
+  for (int i = 0; i < credN; i++) tot += credQ[i].c;
+  for (int i = 0; i < credN && tot > P.cred_max; i++) {  // teto: o trecho mais VELHO perde primeiro
+    float cut = credQ[i].c < tot - P.cred_max ? credQ[i].c : tot - P.cred_max;
+    credQ[i].c -= cut; tot -= cut;
+  }
+  if (last->c >= 0.3f * P.cred_max) { escN = 0; escSide = 0; }   // andou livre de novo: zera as fugas
+}
+static float credAvail(uint32_t now) {                   // credito dos trechos que a re percorre de volta (mais novo -> velho)
+  bool fr = yawFresh(now);
+  float psi = fr ? yawPsiNow(now) : 0, sum = 0;
+  for (int i = credN - 1; i >= 0; i--) {
+    if (fr && !isnan(credQ[i].psi) && absf(psi - credQ[i].psi) > P.cred_psi_tol) break;   // rumo mudou: daqui para tras nao
+    sum += credQ[i].c;
+  }
+  return sum;
+}
+static float credRevMs(uint32_t now) {                   // quanto tempo de re (a v_rev) o credito paga, ate max_rev_ms
+  float ms = P.v_rev > 0.01f ? credAvail(now) / P.v_rev * 1000.0f : 0;
+  float cap = P.max_rev_ms - 250.0f;                     // folga para a rampa (a re continua corta em max_rev_ms)
+  return ms < cap ? ms : (cap > 0 ? cap : 0);
+}
+static void credUse(float x) {                           // a re consome do trecho mais novo para tras
+  revUsed += x;
+  while (x > 0 && credN > 0) {
+    CredSeg& q = credQ[credN - 1];
+    if (q.c > x) { q.c -= x; return; }
+    x -= q.c; credN--;
+  }
+}
+static void credOnTurn(bool withYaw) {                   // curva: sem yaw nao da para saber o rumo -> zera; com yaw so
+  if (!withYaw) { credClear(); return; }                 // os trechos sem rumo (NAN) saem
+  int k = 0;
+  for (int i = 0; i < credN; i++) if (!isnan(credQ[i].psi)) credQ[k++] = credQ[i];
+  credN = k;
+}
+
 static void driveApply(uint32_t now, float v, float s) {
-  if (!armed) { v = 0; s = 0; }
-#if STEER_MODE == STEER_DIFFERENTIAL
+  if (!armed) { v = 0; s = 0; credClear(); }
   if (armed && wDuty > 0 && (diagTest == D_RODA_E || diagTest == D_RODA_D)) {
     // teste por roda: SO a roda pedida, para frente, com duty bruto (sem rampa, trim nem correcao); a outra parada.
     // Reflexos: nao parte com o servo girando e nao avanca sem leitura livre. state L/R = duty/255.
@@ -667,7 +748,6 @@ static void driveApply(uint32_t now, float v, float s) {
     }
     return;
   }
-#endif
   bool servoMoving = (now - tAim) < (uint32_t)P.settle_ms;
   if (servoMoving && absf(curL) < 0.02f && absf(curR) < 0.02f) { v = 0; s = 0; }  // nao parte com servo girando
   if (v > 0 && !forwardAllowed(now)) v = 0;              // reflexo: sem leitura livre, nao avanca
@@ -682,7 +762,7 @@ static void driveApply(uint32_t now, float v, float s) {
 
   float L = v, R = v;
 #if STEER_MODE == STEER_DIFFERENTIAL
-  L = v + s * P.diff_gain;                               // s>0 = direita: roda ESQUERDA mais rapida
+  L = v + s * P.diff_gain;                               // diferencial: s>0 = direita -> roda ESQUERDA mais rapida
   R = v - s * P.diff_gain;
   float m = absf(L) > absf(R) ? absf(L) : absf(R);
   if (m > 1.0f) { L /= m; R /= m; }
@@ -702,7 +782,11 @@ static void driveApply(uint32_t now, float v, float s) {
   rampL = slewTo(rampL, L, step);                        // a RAMPA vale para o comando base (v, s)...
   rampR = slewTo(rampR, R, step);
   curL = rampL; curR = rampR;
-#if STEER_MODE == STEER_DIFFERENTIAL
+  {                                                      // credito: reta com leitura livre soma; re consome
+    float vb = (rampL + rampR) * 0.5f, ds = dt > 0.2f ? 0.2f : dt;
+    if (vb > 0.02f && absf(s) < P.hold_s_eps && absf(rampL - rampR) < 0.05f) credAdd(now, vb * ds);
+    else if (rampL < -0.02f && rampR < -0.02f) credUse(-vb * ds);
+  }
   // ... e a correcao de rumo entra POR CIMA, sem esperar a rampa: na arrancada a roda forte ja anda no pwm_min e a
   // fraca nao; se a correcao subisse na rampa (2/s) o carro giraria em toda partida.
   float hc = holdStep(now, v, s);                        // 0 fora de trecho reto
@@ -716,7 +800,6 @@ static void driveApply(uint32_t now, float v, float s) {
     if (*slow > lim) { *fast -= *slow - lim; *slow = lim; }
     if (*fast < 0.05f) *fast = 0.05f;                    // a correcao nunca para nem inverte uma roda
   }
-#endif
   // escalonamento: parte primeiro a roda com MAIS comando (a lenta, quando a correcao atua); a outra espera
   // KICK_STAGGER_MS. Sem correcao (L = R) a ESQUERDA (ENA) parte primeiro.
   if (absf(curL) >= absf(curR)) {
@@ -749,6 +832,7 @@ static void resetAuto(uint32_t now) {
   cst = C_FRENTE; sub = S_NONE; clearActive = false; avoidN = 0; guardLevel = 0; tries = 0;
   gone = true; waitedAfter = false; noRevFlag = false; hintOk = false; hintFirst = false; haveAng = false;
   avoidFromPhone = false; avoidAgain = false;
+  credClear(); escN = 0; escSide = 0;
   setWhy("");
   aimTo(0, now);
 }
@@ -806,6 +890,7 @@ static void buildScan(uint32_t now) {
 static void startTurn(uint32_t now) {
   turnYaw = yawFresh(now);                               // com yaw: gira ate o delta; sem: pelo tempo (turn_dps)
   psi0 = turnYaw ? yawPsiNow(now) : yawPsi;
+  credOnTurn(turnYaw);
   turnStartT = now;
   goSub(S_CURVA, now);
 }
@@ -845,15 +930,36 @@ static void decideAngle(uint32_t now, float forced) {
   }
   if (!have || bestSc < P.d_stop_cm) {                   // nenhum angulo livre
     tries++;
-    if (tries > (int)P.avoid_retries) { setWhy("sem saida"); clearActive = false; logDecide(0, true, now); goSub(S_PRESO, now); return; }
-    turnTarget = 0; revMs = P.reverse_ms * 1.5f; noRevFlag = false; haveAng = false;
-    logDecide(0, true, now);
-    goSub(S_RE, now);
+    float cr = credRevMs(now);
+    if (tries <= (int)P.avoid_retries && cr >= P.cred_min_ms) {   // 1) re pelo caminho ja percorrido e olha de novo
+      turnTarget = 0; revMs = cr; revGoal = cr / 1000.0f * P.v_rev; revUsed = 0; noRevFlag = false; haveAng = false;
+      logDecide(0, true, now);
+      goSub(S_RE, now);
+      return;
+    }
+    if (escN >= (int)P.escape_max) {                     // 3) ja girou escape_max vezes sem andar livre: desiste
+      setWhy("sem saida"); clearActive = false; logDecide(0, true, now); goSub(S_PRESO, now); return;
+    }
+    // 2) fuga: gira escape_deg para FORA do cone varrido (+-scan_deg). O lado fica FIXO entre fugas seguidas (escolhido
+    // na 1a pelas notas: maior soma; empate = esquerda), entao o carro roda num sentido so e nao fica indo e voltando.
+    if (escSide == 0) {
+      float l = 0, r = 0;
+      for (int i = 0; i < scanNPos; i++) if (scanSc[i] >= 0) { if (scanDeg_[i] < 0) l += scanSc[i]; else r += scanSc[i]; }
+      escSide = r > l ? 1 : -1;
+    }
+    escN++;
+    turnTarget = escSide * P.escape_deg; chosenAng = turnTarget; haveAng = true; noRevFlag = true;
+    snprintf(why, sizeof(why), "sem saida: fuga %+.0f (%d/%.0f)", turnTarget, escN, P.escape_max);
+    logDecide(turnTarget, true, now);
+    startTurn(now);
     return;
   }
-  turnTarget = bestAng; chosenAng = bestAng; haveAng = true; revMs = P.reverse_ms;
+  turnTarget = bestAng; chosenAng = bestAng; haveAng = true;
+  float cr = credRevMs(now);
+  revMs = cr < P.reverse_ms ? cr : P.reverse_ms;          // re so ate onde o caminho percorrido garante (credito)
+  revGoal = revMs / 1000.0f * P.v_rev; revUsed = 0;
   logDecide(bestAng, false, now);
-  if (noRevFlag) startTurn(now); else goSub(S_RE, now);  // "suspeito": gira direto, sem re
+  if (noRevFlag || revMs < P.cred_min_ms) startTurn(now); else goSub(S_RE, now);  // suspeito/sem credito: gira direto
 }
 
 static void autoStep(uint32_t now, float* v, float* s) {
@@ -918,7 +1024,9 @@ static void autoStep(uint32_t now, float* v, float* s) {
     }
     case S_RE:
       *v = -P.v_rev;
-      if (el >= (uint32_t)revMs) {
+      // fim da re pela DISTANCIA (credito andado: o servo voltando ao centro e a rampa atrasam a partida), pelo credito
+      // que acabou ou, por seguranca, pelo tempo (revMs + 800 ms)
+      if (revUsed >= revGoal || (revUsed > 0 && credAvail(now) <= 0.001f) || el >= (uint32_t)revMs + 800) {
         if (turnTarget == 0) { hintOk = false; buildScan(now); aimTo(scanDeg_[scanOrd[0]], now); goSub(S_OLHA, now); }  // sem saida: olha de novo
         else startTurn(now);
       }
@@ -1129,6 +1237,50 @@ static void diagStep(uint32_t now, float* v, float* s) {
   if (el > 300 && !forwardAllowed(now)) diagFinish(now, "hard stop / sem leitura livre");
 }
 
+// ---- teste do servo do sensor (visor, botao "Servo"): motores PARADOS, nao precisa armar ----
+// Aponta -60, -30, 0, +30, +60 (SVT_STEP_MS cada) e guarda a mediana assentada de cada angulo. Com obstaculos
+// diferentes em volta, distancias IGUAIS em todos os angulos = o sensor nao girou (fio/alimentacao do servo).
+// {"t":"diag","teste":"servo","deg":[..],"cm":[..],"us":[..],"hz":50}  cm: null = sem eco, -1 = sem leitura assentada
+#define SVT_N 5
+#define SVT_STEP_MS 900
+static const float SVT_DEG[SVT_N] = {-60, -30, 0, 30, 60};
+static int svtI = -1;                                      // -1 = fora do teste
+static uint32_t svtT = 0;
+static float svtCm[SVT_N];
+
+static void servoTestEnd(uint32_t now, const char* abort) {
+  char cm[SVT_N * 8 + 4], dg[SVT_N * 5 + 4], us[SVT_N * 6 + 4];
+  int pc = 0, pd = 0, pu = 0;
+  for (int i = 0; i < SVT_N; i++) {
+    float u = SERVO_CENTER_US + SENSOR_SERVO_SIGN * (SVT_DEG[i] + P.sensor_trim_deg) * SERVO_US_PER_DEG;
+    pd += snprintf(dg + pd, sizeof(dg) - pd, "%s%.0f", i ? "," : "", SVT_DEG[i]);
+    pu += snprintf(us + pu, sizeof(us) - pu, "%s%.0f", i ? "," : "", clampf(u, 500.0f, 2500.0f));
+    if (svtCm[i] <= -2) pc +=snprintf(cm + pc, sizeof(cm) - pc, "%s-1", i ? "," : "");
+    else if (svtCm[i] < 0) pc += snprintf(cm + pc, sizeof(cm) - pc, "%snull", i ? "," : "");
+    else pc += snprintf(cm + pc, sizeof(cm) - pc, "%s%.1f", i ? "," : "", svtCm[i]);
+  }
+  emitf("{\"t\":\"diag\",\"teste\":\"servo\",\"deg\":[%s],\"cm\":[%s],\"us\":[%s],\"hz\":%u%s%s%s}", dg, cm, us,
+        (unsigned)pwmFreq(PIN_SENSOR_SERVO, CH_SENSOR_SERVO),
+        abort ? ",\"abortado\":\"" : "", abort ? abort : "", abort ? "\"" : "");
+  svtI = -1;
+  aimTo(0, now);
+}
+
+static void servoTestStart(uint32_t now) {
+  for (int i = 0; i < SVT_N; i++) svtCm[i] = -2;
+  svtI = 0; svtT = now;
+  aimTo(SVT_DEG[0], now);
+}
+
+static void servoTestTask(uint32_t now) {
+  if (svtI < 0) return;
+  if (armed && !diagHold) { servoTestEnd(now, "carro armado andando"); return; }   // a FSM tambem mexe no servo
+  if (now - svtT < SVT_STEP_MS) return;
+  if (meas.valid && absf(meas.angle - SVT_DEG[svtI]) < 0.5f) svtCm[svtI] = meas.cm;   // mediana assentada (-1 = sem eco)
+  if (++svtI < SVT_N) { svtT = now; aimTo(SVT_DEG[svtI], now); return; }
+  servoTestEnd(now, NULL);
+}
+
 // ============================ ARMAR / BOTAO / LED ===========================
 static void setMode(int m, uint32_t now) {                 // idempotente: o mesmo modo nao reinicia a FSM
   if (m == mode && !diagHold) return;
@@ -1188,12 +1340,12 @@ static void printHeartbeat(uint32_t now) {
   if (haveAng) snprintf(ang, sizeof(ang), "%.0f", chosenAng); else strcpy(ang, "null");
   emitf("{\"t\":\"state\",\"mode\":\"%s\",\"src\":\"%s\",\"armed\":%s,\"esp\":%s,\"st\":\"%s\",\"sub\":\"%s\",\"c\":%.1f,\"deg\":%.1f,"
         "\"cls\":\"%s\",\"ang\":%s,\"vis\":%d,\"yaw\":%d,"
-        "\"L\":%.2f,\"R\":%.2f,\"hold\":%d,\"hc\":%.2f,\"trim\":%.2f,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
+        "\"L\":%.2f,\"R\":%.2f,\"hold\":%d,\"hc\":%.2f,\"trim\":%.2f,\"cred\":%.2f,\"esc\":%d,\"why\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"rest\":%lu}",
         mode == MODE_AUTO ? "auto" : "phone", mode == MODE_AUTO ? "sensor" : "visao",
         armed ? "true" : "false", delegated ? "true" : "false",
         diagHold ? "DIAG" : (fsm ? CN[cst] : "-"), diagHold ? (diagTest ? DIAG_N[diagTest] : "parado") : (fsm ? SN[sub] : ""),
         centerCm, servoDeg, haveC ? KN[centerClass(now)] : "-", ang, visUsable(now) ? 1 : 0, yawFresh(now) ? 1 : 0,
-        curL, curR, holdMode, holdCorr, holdTrim, why, (unsigned long)(now / 1000),
+        curL, curR, holdMode, holdCorr, holdTrim, credRevMs(now) / 1000.0f, escN, why, (unsigned long)(now / 1000),
         (resetReason >= 0 && resetReason <= 10) ? RR[resetReason] : "?", (unsigned long)rtcRestores);
 }
 
@@ -1233,7 +1385,7 @@ static void handleJson(const char* line, uint32_t now) {
     if (jsonBool(line, "on", &on)) setArmed(on, now);
   } else if (strcmp(t, "ping") == 0) {
     emitf("{\"t\":\"pong\"}");
-  } else if (strcmp(t, "diag") == 0) {  // diagnostico do visor: armar | dir | esq | reto | reto_corr | roda_esq | roda_dir | parar | zerar_trim
+  } else if (strcmp(t, "diag") == 0) {  // diagnostico do visor: armar | dir | esq | reto | reto_corr | roda_esq | roda_dir | servo | parar | zerar_trim
     char d[16];
     if (!jsonStr(line, "teste", d, sizeof(d))) return;
     if (strcmp(d, "armar") == 0) {                       // arma (4 s) e fica PARADO esperando os testes
@@ -1246,7 +1398,16 @@ static void handleJson(const char* line, uint32_t now) {
       emitf("{\"t\":\"diag\",\"teste\":\"zerar_trim\",\"trim\":0.00}");
       return;
     }
-    if (strcmp(d, "parar") == 0) { if (diagTest != D_NONE) diagFinish(now, "parar"); diagHold = armed || armPending; return; }
+    if (strcmp(d, "parar") == 0) {
+      if (diagTest != D_NONE) diagFinish(now, "parar");
+      if (svtI >= 0) servoTestEnd(now, "parar");
+      diagHold = armed || armPending; return;
+    }
+    if (strcmp(d, "servo") == 0) {                       // teste do servo: desarmado ou armado parado
+      if (armed && !diagHold) { emitf("{\"t\":\"diag\",\"teste\":\"servo\",\"erro\":\"pare o carro antes (Parar)\"}"); return; }
+      if (svtI < 0) servoTestStart(now);
+      return;
+    }
     int k = D_NONE;
     for (int i = 1; i <= D_RODA_D; i++) if (strcmp(d, DIAG_N[i]) == 0) k = i;
     if (k == D_NONE) return;
@@ -1397,6 +1558,7 @@ void loop() {
   if (rtcRestores && now > 30000) rtcRestores = 0;       // 30 s sem cair: zera o contador de retomadas
   buttonTask(now);
   servoTick(now);
+  servoTestTask(now);
   sensorTask(now);
   float v = 0, s = 0;
   if (armed) {

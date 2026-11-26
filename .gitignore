@@ -3,6 +3,7 @@ venv*/
 
 __pycache__/
 
+CLAUDE.MD
 esp32anotation/
 # gerado pelo Gradle (task syncPython copia os .py da raiz)
 android/app/src/main/python/

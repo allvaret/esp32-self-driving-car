@@ -36,7 +36,13 @@ class ControlConfig:
     reverse_s: float = 0.5        # idealmente derivado de reverse_m (ver derive_maneuver_times); x1,5 se nao ha saida
     turn_s: float = 1.0           # SO o controller v1 congelado (tempo fixo). O firmware gira ate o angulo: yaw ou turn_dps
     turn_dps: float = 90.0        # graus/s com v_turn e steer=1 (CALIBRAR; = calib.yaw_rate_dps). So vale sem yaw do celular
-    avoid_retries: int = 2        # re maior + nova olhada antes de desistir (PRESO)
+    avoid_retries: int = 2        # sem saida: re pelo credito + nova olhada (ate N vezes) antes da fuga
+    # --- credito de re e fuga (firmware 0.6.0): a re cega so volta pelo caminho ja andado em reta ---
+    cred_max: float = 1.0         # teto do credito (v*s; 1,0 a v_cruise 0,35 = ~2,9 s de reta)
+    cred_psi_tol_deg: float = 35.0  # o credito de um trecho vale se o rumo atual difere dele no maximo isso
+    cred_min_s: float = 0.15      # credito menor que isso (em s de re a v_rev): gira direto, sem re
+    escape_deg: float = 90.0      # sem saida: gira isso para fora do cone varrido, sempre para o mesmo lado
+    escape_max: int = 4           # fugas seguidas sem andar livre antes do PRESO
     turn_slow_deg: float = 25.0   # curva com yaw: faltando menos que isso, o giro cai proporcional ao erro...
     turn_k_min: float = 0.35      # ... ate no minimo esta fracao (v_turn e s), para nao parar antes do alvo
     # --- histerese (s) ---

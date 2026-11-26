@@ -30,6 +30,8 @@ def test_control_config_matches_firmware_params():
         "hold_delay_s": p["hold_delay_ms"] / 1000, "hold_psi_max_deg": p["hold_psi_max"], "hold_pwm_max": p["hold_pwm_max"],
         "trim_rate": p["trim_rate"], "trim_max": p["trim_max"], "sensor_fresh_s": p["fresh_ms"] / 1000,
         "turn_slow_deg": p["turn_slow_deg"], "turn_k_min": p["turn_k_min"],
+        "cred_max": p["cred_max"], "cred_psi_tol_deg": p["cred_psi_tol"], "cred_min_s": p["cred_min_ms"] / 1000,
+        "escape_deg": p["escape_deg"], "escape_max": p["escape_max"],
         "pwm_min": p["pwm_min"], "pwm_max": p["pwm_max"], "pwm_min_l": p["pwm_min_l"], "pwm_max_l": p["pwm_max_l"],
         "pwm_min_r": p["pwm_min_r"], "pwm_max_r": p["pwm_max_r"],
     }

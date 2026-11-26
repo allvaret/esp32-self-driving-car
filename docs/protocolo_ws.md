@@ -1,4 +1,4 @@
-# Protocolo celular <-> ESP32 (firmware 0.5.2)
+# Protocolo celular <-> ESP32 (firmware 0.6.1)
 
 **Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
 *opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
@@ -49,7 +49,7 @@ Toda mensagem deve caber em **160 bytes** (lineBuf da serial); o brain.py garant
 | `{"t":"calibrar"}` | so repassa; o cerebro reaprende a cor do chao (a opiniao fica `ok:0` enquanto isso). O visor manda ao clicar em "Explorar: visao" |
 | `{"t":"ping"}` | responde `pong` |
 | `{"t":"trim","v":0}` | define e grava na NVS o trim aprendido do rumo (unidades de roda) |
-| `{"t":"diag","teste":"armar"\|"dir"\|"esq"\|"reto"\|"reto_corr"\|"roda_esq"\|"roda_dir"\|"parar"\|"zerar_trim"}` | diagnostico (secao **Diagnostico** do visor), ver abaixo |
+| `{"t":"diag","teste":"armar"\|"dir"\|"esq"\|"reto"\|"reto_corr"\|"roda_esq"\|"roda_dir"\|"servo"\|"parar"\|"zerar_trim"}` | diagnostico (secao **Diagnostico** do visor), ver abaixo |
 
 ### Diagnostico (visor, sem PC)
 - `armar`: arma (4 s) e fica **parado** (`state.st = "DIAG"`, `sub = "parado"`), sem rodar a FSM.
@@ -95,13 +95,33 @@ fica em `+-trim_max`, e e gravado na NVS ao desarmar e lido no boot. `{"t":"trim
 ## Mensagens que o ESP32 emite (serial + WebSocket)
 `hello`, `state` (a cada 500 ms), `range` (cada leitura; no modo auto so com clientes WS),
 `log`, `cfg_ok`, `pong`, `scan`, `turn` (fim de cada curva), `diag` (fim de cada teste) e os `goal`/`think` repassados.
-Campos de `turn` e `diag`: `docs/como_ler_o_log.md`. Ao conectar, cada cliente recebe o `goal` atual (com `src`) e o diario do servo.
+Campos de `turn` e `diag`: `docs/como_ler_o_log.md`. Ao conectar, cada cliente recebe o `goal` atual (com `src`), um `log` com a versao e a frequencia **real** de cada PWM
+(`car_firmware 0.6.1 | pwm: servo GPIO18 50 Hz, ENA GPIO13 1000 Hz, ENB GPIO32 1000 Hz`; 0 Hz ou `ERRO sem PWM: GPIOx` =
+o pino nao recebe PWM) e o diario do servo.
+
+### Teste do servo do sensor (0.6.1)
+`{"t":"diag","teste":"servo"}`: **nao precisa armar** (recusado com o carro andando: a FSM tambem mexe no servo). Motores
+parados; o servo aponta -60, -30, 0, +30, +60 (900 ms cada) e volta ao centro. Resposta:
+`{"t":"diag","teste":"servo","deg":[-60,-30,0,30,60],"cm":[40.0,null,120.0,-1,90.0],"us":[2160,1830,1500,1170,840],"hz":50}`
+(`cm`: `null` = sem eco, `-1` = sem leitura assentada; `us` = pulso pedido; `hz` = PWM real no pino do servo). Com algo
+perto de UM lado, distancias iguais em todos os angulos = o sensor nao girou (fio de sinal/5 V/GND do servo).
 
 `state`: `mode`, `src` (`sensor`/`visao`), `armed`, `esp` (o ESP32 esta no comando), `st`/`sub` (FSM; `sub` = ESPERA, PARADA, OLHA, RE, CURVA, PRESO),
 `c` (mediana central em cm, -1 = sem eco), `cls` (`valida`/`livre`/`suspeito`), `deg` (servo), `ang` (angulo escolhido na ultima varredura ou `null`),
 `vis`/`yaw` (1 = opiniao/rumo frescos), `L`/`R` (roda esquerda/direita, com a correcao de rumo; podem passar de 1 na roda
 lenta), `hold` (0 = fora de reta, 1 = so trim, 2 = corrigindo com yaw), `hc` (correcao aplicada), `trim` (trim aprendido),
-`why`, `up`, `rst`, `rest`.
+`cred` (credito de re em s a `v_rev`, ate `max_rev_ms` - 250), `esc` (fugas seguidas sem andar livre), `why`, `up`, `rst`, `rest`.
+
+### Credito de re e fuga (0.6.0)
+A re e cega (o sensor olha so para a frente). O ESP32 guarda uma fila de ate 6 trechos retos `{psi, credito}`: em reta
+(`|s| < hold_s_eps`, rodas iguais) soma `v*dt` do comando base; trecho novo quando o rumo muda > 10 graus. A re **consome**
+o credito, do trecho mais novo para tras, e so conta os trechos com `|psi_agora - psi_trecho| <= cred_psi_tol` (sem yaw: a
+fila zera a cada curva). Total limitado a `cred_max`.
+- Desvio com angulo: re = `min(reverse_ms, credito)`; menos que `cred_min_ms` = gira direto, sem re.
+- Sem saida (nenhum angulo >= `d_stop`): ate `avoid_retries` vezes, re pelo credito e nova olhada; depois **fuga**: gira
+  `escape_deg` para fora do cone varrido, sempre para o **mesmo lado** (escolhido na 1a fuga pela maior soma de notas;
+  empate = esquerda), sem re. Depois de `escape_max` fugas sem andar livre (>= 30% de `cred_max` num trecho), **PRESO**.
+  As fugas zeram ao andar livre. `why`: `sem saida: fuga -90 (1/4)`.
 
 ### "Sem eco" em 3 estados
 Sempre pela **mediana** e pelo historico, nunca pelo ping bruto:

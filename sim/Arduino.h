@@ -25,11 +25,14 @@ int digitalRead(int);
 unsigned long pulseIn(int pin, int state, unsigned long timeout);
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
 bool ledcAttach(uint8_t pin, uint32_t freq, uint8_t res);
+bool ledcAttachChannel(uint8_t pin, uint32_t freq, uint8_t res, uint8_t ch);
 bool ledcWrite(uint8_t pin, uint32_t duty);
+uint32_t ledcReadFreq(uint8_t pin);
 #else
 double ledcSetup(uint8_t ch, double freq, uint8_t bits);
 void ledcAttachPin(uint8_t pin, uint8_t ch);
 void ledcWrite(uint8_t ch, uint32_t duty);
+double ledcReadFreq(uint8_t ch);
 #endif
 struct SerialStub {
   void begin(int) {}

@@ -43,6 +43,7 @@ canvas{width:100%;height:auto;display:block}
 <div class="row" style="margin-top:8px"><button data-d="dir">Girar a direita 1 s</button><button data-d="esq">Girar a esquerda 1 s</button></div>
 <div class="row" style="margin-top:8px"><button data-d="roda_esq">Roda esq. (degraus)</button><button data-d="roda_dir">Roda dir. (degraus)</button></div>
 <div class="row" style="margin-top:8px"><button data-d="reto">Reto 2 s (sem correcao)</button><button data-d="reto_corr">Reto 2 s com correcao</button></div>
+<div class="row" style="margin-top:8px"><button data-d="servo">Servo do sensor (-60..+60, sem armar)</button></div>
 <div id="dres" style="margin-top:8px;white-space:pre-wrap;font-variant-numeric:tabular-nums"></div>
 <div class="row" id="dask" style="margin-top:8px;display:none"><button data-v="1">o carro virou a DIREITA</button><button data-v="0">o carro virou a ESQUERDA</button></div>
 <div class="row" id="dwh" style="margin-top:8px;display:none"><button data-w="1">girou a roda ESQUERDA</button><button data-w="0">girou a roda DIREITA</button></div>
@@ -132,7 +133,7 @@ function handle(m){
 }
 // ---- diagnostico: o ESP32 mede (L, R, giro do giroscopio); quem olha o carro diz para onde ele virou ----
 let DG={},dLast=null,wLast=null;
-const NM={dir:'Girar a direita',esq:'Girar a esquerda',reto:'Reto sem correcao',reto_corr:'Reto com correcao',roda_esq:'Roda esquerda',roda_dir:'Roda direita'};
+const NM={dir:'Girar a direita',esq:'Girar a esquerda',reto:'Reto sem correcao',reto_corr:'Reto com correcao',roda_esq:'Roda esquerda',roda_dir:'Roda direita',servo:'Servo do sensor'};
 function f1(x){return x==null?'-':(+x).toFixed(1);}
 // sentido medido: pelo giro mediano (confiavel); o psi so se nao houver giro
 function gsign(m){const g=m.rate_med!=null?m.rate_med:m.psi;return g==null?null:g>0;}
@@ -190,9 +191,20 @@ function suggest(){const a=DG.roda_esq,b=DG.roda_dir;if(!a||!b)return;
   WSUG=s;$('wapl').disabled=false;$('dsug').textContent=t;}
 $('wapl').onclick=()=>{if(!WSUG)return;send(Object.assign({t:'cfg'},WSUG));addLog('[diag] faixa das rodas enviada: '+JSON.stringify(WSUG),'var(--ac)');};
 $('wdef').onclick=()=>{send({t:'cfg',pwm_min_l:-1,pwm_max_l:-1,pwm_min_r:-1,pwm_max_r:-1});addLog('[diag] rodas: faixa padrao (pwm_min/pwm_max)','var(--ac)');};
+// teste do servo: com algo perto de UM lado, distancias iguais em todos os angulos = o sensor nao girou
+function servoRes(m){
+  const v=m.cm.filter(x=>x!=null&&x>=0),same=v.length>=4&&Math.max(...v)-Math.min(...v)<3;
+  let s='Servo do sensor'+(m.abortado?'  ABORTADO: '+m.abortado:'')+'\n'+m.deg.map((d,i)=>d+'°: '+(m.cm[i]==null?'sem eco':(m.cm[i]<0?'-':m.cm[i].toFixed(0)+' cm'))).join('   ')+'\nPWM no pino do servo: '+m.hz+' Hz',bad=false;
+  if(m.hz===0){s+='\nERRO: pino do servo SEM PWM (firmware). Grave o log e mande.';bad=true;}
+  else if(same){s+='\nDistancias IGUAIS em todos os angulos: o sensor NAO girou. Confira o fio de sinal do servo no GPIO18 (vizinho do antigo 19), o 5 V e o GND do servo.';bad=true;}
+  else if(v.length<4)s+='\nPoucas leituras com eco: ponha a mao ~30 cm a esquerda do carro e repita.';
+  else s+='\nDistancias diferentes por angulo: o servo gira.';
+  $('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),bad?'var(--er)':'var(--ok)');
+}
 function diag(m){
   if(m.erro){$('dres').textContent=(NM[m.teste]||m.teste)+': '+m.erro;return;}
   if(m.teste==='zerar_trim'){addLog('[diag] trim zerado','var(--ac)');return;}
+  if(m.teste==='servo'){servoRes(m);return;}
   DG[m.teste]=m;
   $('dver').textContent='';$('dask').style.display='none';$('dwh').style.display='none';
   if(m.teste==='roda_esq'||m.teste==='roda_dir'){const s=wheel(m);$('dres').textContent=s;addLog('[diag] '+s.replace(/\n/g,' | '),'var(--ac)');suggest();return;}
