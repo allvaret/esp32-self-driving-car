@@ -1,5 +1,5 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.6.2
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.6.3
  *
  * CAMINHO 1: o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
  * a OPINIAO da visao ({"t":"vis"}) e o rumo do giroscopio ({"t":"yaw"}). Quem para, varre e desvia e este arquivo.
@@ -39,13 +39,10 @@
 #include <Preferences.h>        // NVS: guarda o trim aprendido do rumo entre desligamentos
 #include "net.h"
 
-#define FW_VERSION "car_firmware 0.6.2"
+#define FW_VERSION "car_firmware 0.6.3"
 
 // ======================= OPCOES DE COMPILACAO ===============================
 #define MOTORS_ENABLED 1        // 0 = bancada SEM motores: nada e escrito no L298N
-#define STEER_SERVO 1           // direcao por servo (carro "esterca") + 2 motores de tracao
-#define STEER_DIFFERENTIAL 2    // sem servo de direcao: curva por diferenca de velocidade
-#define STEER_MODE STEER_DIFFERENTIAL
 #define MODE_AUTO 0
 #define MODE_PHONE 1
 #define DEFAULT_MODE MODE_AUTO
@@ -63,8 +60,6 @@
 #define PIN_TRIG 23
 #define PIN_ECHO 22             // ATENCAO: ECHO do HC-SR04 e 5 V -> divisor 1k/2k ate este pino
 #define PIN_SENSOR_SERVO 4      // sinal do servo do sensor. GPIO18 saiu (26/11: PWM de 50 Hz ligado no firmware, 0 V no pino)
-#define PIN_STEER_SERVO 14      // so no STEER_SERVO (nao usado no diferencial)
-#define STEER_SERVO_SIGN 1
 #define PIN_ENA 13              // L298N: ENA (PWM) -> OUT1/OUT2 -> roda ESQUERDA. GPIO19 saiu (preso em ~3 V, 22/11)
 #define PIN_IN1 16              // RX2  (roda ESQUERDA)
 #define PIN_IN2 17              // TX2  (roda ESQUERDA)
@@ -75,7 +70,6 @@
 #define PIN_LED 2               // LED da placa
 
 #define CH_SENSOR_SERVO 0       // canais LEDC so no core 2.x (no 3.x o ledcAttach escolhe): 0 = servo 50 Hz, 2/3 = motores
-#define CH_STEER_SERVO 1        // so no STEER_SERVO
 #define CH_ENA 2
 #define CH_ENB 3
 
@@ -113,7 +107,7 @@ struct Params {
   float guard_window_ms = 20000, guard_max = 2, backoff1_ms = 1000, backoff2_ms = 2000, backoff3_ms = 4000;
   // carro (calibrar com a bateria). trim_left/right: ganho fixo da roda ESQUERDA/DIREITA fisica.
   // diff_gain: curva diferencial, L = v + s*diff_gain (roda esquerda), R = v - s*diff_gain (direita); s > 0 = direita.
-  float trim_left = 1.0f, trim_right = 1.0f, steer_trim_deg = 0, steer_max_deg = 30, diff_gain = 0.6f;
+  float trim_left = 1.0f, trim_right = 1.0f, diff_gain = 0.6f;
   float pwm_min = 130, pwm_max = 150, slew_per_s = 2.0f;   // [DEMO] valores atuais do carro
   // faixa de duty POR RODA (comando 0..1 -> pwm_min_x..pwm_max_x); -1 = usa pwm_min/pwm_max. Medir com o teste por
   // roda (o visor sugere e aplica: mesma velocidade nas duas rodas para o mesmo comando). Gravados na NVS pelo cfg.
@@ -153,8 +147,7 @@ static const KV PARAM_TABLE[] = {
   {"turn_slow_deg", &P.turn_slow_deg}, {"turn_k_min", &P.turn_k_min},
   {"guard_window_ms", &P.guard_window_ms}, {"guard_max", &P.guard_max},
   {"backoff1_ms", &P.backoff1_ms}, {"backoff2_ms", &P.backoff2_ms}, {"backoff3_ms", &P.backoff3_ms},
-  {"trim_left", &P.trim_left}, {"trim_right", &P.trim_right}, {"steer_trim_deg", &P.steer_trim_deg},
-  {"steer_max_deg", &P.steer_max_deg}, {"diff_gain", &P.diff_gain},
+  {"trim_left", &P.trim_left}, {"trim_right", &P.trim_right}, {"diff_gain", &P.diff_gain},
   {"pwm_min", &P.pwm_min}, {"pwm_max", &P.pwm_max}, {"slew_per_s", &P.slew_per_s},
   {"pwm_min_l", &P.pwm_min_l}, {"pwm_max_l", &P.pwm_max_l}, {"pwm_min_r", &P.pwm_min_r}, {"pwm_max_r", &P.pwm_max_r},
   {"kick_pwm", &P.kick_pwm}, {"kick_ms", &P.kick_ms},
@@ -211,7 +204,6 @@ static uint32_t tRefuteLog = 0;
 static float curL = 0, curR = 0;           // saida da roda ESQUERDA / DIREITA (rampa + correcao de rumo)
 static float rampL = 0, rampR = 0;         // comando base (v, s) depois da rampa, sem a correcao de rumo
 static uint32_t tLastApply = 0;
-static float lastSteerOut = 999;
 static bool revActive = false;
 // credito de re: fila de trechos retos {psi no inicio do trecho (NAN = sem yaw), credito v*s}; o mais novo no fim
 #define CRED_N 6
@@ -765,19 +757,10 @@ static void driveApply(uint32_t now, float v, float s) {
   v = clampf(v, -1.0f, 1.0f);
   s = clampf(s, -1.0f, 1.0f);
 
-  float L = v, R = v;
-#if STEER_MODE == STEER_DIFFERENTIAL
-  L = v + s * P.diff_gain;                               // diferencial: s>0 = direita -> roda ESQUERDA mais rapida
-  R = v - s * P.diff_gain;
+  float L = v + s * P.diff_gain;                         // diferencial: s>0 = direita -> roda ESQUERDA mais rapida
+  float R = v - s * P.diff_gain;
   float m = absf(L) > absf(R) ? absf(L) : absf(R);
   if (m > 1.0f) { L /= m; R /= m; }
-#else
-  float steerOut = STEER_SERVO_SIGN * (s * P.steer_max_deg + P.steer_trim_deg);
-  if (absf(steerOut - lastSteerOut) > 0.05f) {
-    servoUs(PIN_STEER_SERVO, CH_STEER_SERVO, SERVO_CENTER_US + steerOut * SERVO_US_PER_DEG);
-    lastSteerOut = steerOut;
-  }
-#endif
   L = clampf(L * P.trim_left, -1.0f, 1.0f);
   R = clampf(R * P.trim_right, -1.0f, 1.0f);
 
@@ -1513,9 +1496,6 @@ void setup() {
   pinMode(PIN_BTN, INPUT_PULLUP);
   pinMode(PIN_LED, OUTPUT);
   pwmAttach(PIN_SENSOR_SERVO, CH_SENSOR_SERVO, 50, 16);
-#if STEER_MODE == STEER_SERVO
-  pwmAttach(PIN_STEER_SERVO, CH_STEER_SERVO, 50, 16);
-#endif
 #if MOTORS_ENABLED
   pinMode(PIN_IN1, OUTPUT); pinMode(PIN_IN2, OUTPUT); pinMode(PIN_IN3, OUTPUT); pinMode(PIN_IN4, OUTPUT);
   pwmAttach(PIN_ENA, CH_ENA, MOTOR_PWM_HZ, MOTOR_PWM_BITS);
