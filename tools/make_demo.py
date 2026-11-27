@@ -4,7 +4,7 @@ Paineis: camera | chao segmentado (verde = chao, vermelho = nao-chao) e, embaixo
 visao (LIVRE/INCERTO/OBSTACULO), a confianca relativa r com os limiares, e o estado do controlador.
 
 Uso (da raiz do repositorio):
-    python -m tools.make_demo                                   # video do sofa -> docs/media/demo_sofa.gif
+    python -m tools.make_demo                                   # video do sofa -> docs/media/demo_replay.gif
     python -m tools.make_demo <video.mp4> --out docs/media/x.gif --width 480 --fps 10
 Requer Pillow (vem junto com matplotlib).
 """
@@ -21,7 +21,7 @@ from vision.ground import floor_mask
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VIDEO = ROOT / "assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4"
-DEFAULT_OUT = ROOT / "docs/media/demo_sofa.gif"
+DEFAULT_OUT = ROOT / "docs/media/demo_replay.gif"
 
 BG = (24, 24, 28)
 FG = (235, 235, 235)
