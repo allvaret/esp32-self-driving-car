@@ -4,6 +4,8 @@ O Kotlin chama StreamRunner.process_rgba_frame() por frame e recebe JSON (string
 da visao (vision_state, r, setores...). Quem age e o ESP32; o brain.py so repassa a opiniao.
 Tambem por frame: o indice de movimento da camera ("mov", vision/motion.py; o brain repassa ao ESP32 para detectar
 BATIDA) e o quadro original vai para o video da corrida (tools/video_log.py; "vf" = indice dele no video, ou None).
+Quem chama: LiveActivity (Kotlin) via tools/android_entry e brain.py.
+Restricoes: Python 3.10 + OpenCV 4.5.1 headless no celular (Chaquopy) e Python 3.10/3.11 + OpenCV 4.8 no PC; uma thread do OpenCV (cv2.setNumThreads(1)); tempos em segundos.
 Este modulo NAO importa control.controller nem control.mocks (ver tests/test_live_path.py).
 O loop offline com Controller/mocks esta em replay/offline.py.
 """

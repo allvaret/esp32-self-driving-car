@@ -1,4 +1,4 @@
-"""vision/decision.py v0.1 - maquina de 3 estados com histerese, agora em SEGUNDOS.
+"""vision/decision.py - maquina de 3 estados com histerese, agora em SEGUNDOS.
 
 Entradas por frame (mesmas colunas do coverage.csv) + o instante t (s):
     prob_mean_cen : retroprojecao media (0..1) na faixa inferior, terco central

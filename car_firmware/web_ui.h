@@ -1,4 +1,7 @@
-// web_ui.h - pagina do "pensamento" servida pelo ESP32 em http://192.168.4.1
+// web_ui.h - pagina do operador (visor) servida pelo ESP32 em http://192.168.4.1
+// O que faz: botoes (Explorar sensor/visao, PARAR TUDO), estado, radar do sensor, imagem da visao, testes de diagnostico,
+// teste por roda e download dos logs. Entrada: JSON do WebSocket :81 (docs/protocolo_ws.md). Saida: comandos goal/diag/cfg.
+// Quem usa: car_firmware.ino (WEB_UI em PROGMEM). Calculos em JS espelhados em sim/check_firmware.py.
 #pragma once
 #include <Arduino.h>
 

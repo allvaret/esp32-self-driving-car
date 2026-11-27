@@ -6,6 +6,8 @@ pelo brain (mensagem think com campo "viz") e mostra num <img>. A imagem NAO pas
 Uso (dentro do StreamRunner.process_rgba_frame, depois de calcular a mascara):
     import viz
     viz.push(frame=bgr, prob=backproj, mask=mask)      # qualquer subconjunto; nomes livres
+Quem chama: brain.py (start) e main.StreamRunner (push).
+Restricoes: Python 3.10 + OpenCV 4.5.1 headless no celular (Chaquopy) e Python 3.10/3.11 + OpenCV 4.8 no PC; uma thread do OpenCV (cv2.setNumThreads(1)); tempos em segundos.
 O brain.start() ja chama viz.start(). Custo: so codifica a cada 1/FPS s (~1-2 ms no S9).
 """
 import html

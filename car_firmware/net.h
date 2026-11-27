@@ -1,9 +1,10 @@
-// net.h - softAP + pagina web (porta 80) + WebSocket (porta 81)            car_firmware 0.4
+// net.h - softAP + pagina web (porta 80) + WebSocket (porta 81)            car_firmware 0.7.x
 //
 // Rede:  o ESP32 cria a rede "CARRINHO" (senha em secrets.h), IP fixo 192.168.4.1.
 // Quem conecta:
 //   - celular VISOR  : abre http://192.168.4.1 no navegador (pagina em web_ui.h). Sem app.
 //   - celular CEREBRO: S9 (Python) conecta em ws://192.168.4.1:81 e manda drive/aim/think.
+// Entradas/saidas: mensagens JSON (docs/protocolo_ws.md). Incluido so por car_firmware.ino.
 // Protocolo: o MESMO JSON da serial (uma mensagem por frame). Tudo que o firmware emite com
 // emitf() vai para a serial E para todos os clientes WebSocket.
 // Biblioteca: "WebSockets" de Markus Sattler (Links2004)  ->  arduino-cli lib install "WebSockets"

@@ -1,3 +1,13 @@
+"""vision/ground.py - segmentacao do chao por histograma H-S e vetor de espaco livre.
+
+O que faz: aprende o aspecto do 'chao' (histograma Hue-Saturation) no inicio da corrida, calcula a
+mascara de chao por retroprojecao com limiar derivado dos dados (calibrate_thr) e a converte em
+espaco livre por coluna (free_space_vector) e em 5 setores (free_sectors).
+Entradas: quadro BGR (numpy uint8). Saidas: mascara binaria, vetor de espaco livre, setores.
+Quem chama: main.VisionRunner (caminho ao vivo), replay/ e tools/ (offline).
+Restricoes: Python 3.10 + OpenCV 4.5.1 headless no celular (Chaquopy) e Python 3.10/3.11 + OpenCV 4.8 no PC; uma thread do OpenCV (cv2.setNumThreads(1)); tempos em segundos.
+Sem estado global: o histograma e o limiar sao passados pelo chamador.
+"""
 import cv2, numpy as np
 
 def preprocess(frame_bgr, target_w = 320):

@@ -1,0 +1,1 @@
+"""Utilitarios: enlace WebSocket (ws_link), logs da corrida (flight_log, video_log), conversores e benchmarks. Os usados ao vivo no celular estao listados no syncPython (android/app/build.gradle.kts)."""
