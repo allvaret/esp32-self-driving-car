@@ -11,6 +11,7 @@
   <img src="docs/media/demo_corrida.gif" alt="Replay of a run recorded by the car's camera: camera frame, segmented floor, vision state and confidence" width="640">
 </p>
 <p align="center"><sub>Replay of a run recorded by the car's own camera (24 s of 36). Left: camera. Right: floor segmentation (green = floor). Bottom: vision state, controller state of the offline replay and the relative confidence <code>r</code> with its thresholds.</sub></p>
+<p align="center"><sub>☹️ <b>In this run the car hits the wall, and it should not have.</b> The sensor sweeps in 15° steps, and with the car at a diagonal to the wall, some step would face it side-on, the echo would come back and the sensor would cover its own limitation. Unfortunately we ran into loose-contact (bad wiring) problems, and for now the project is paused. See <a href="#limitations">Limitations</a>.</sub></p>
 
 
 > 🇧🇷 Versão em português: [README.pt-BR.md](README.pt-BR.md). The technical documents in [`docs/`](docs/README.md) are in Brazilian Portuguese, except the architecture notes and the engineering decisions, which are in English.
@@ -44,7 +45,7 @@ flowchart LR
     end
     B <-- "WebSocket :81<br/>one JSON per message" --> FW
     subgraph ESP["ESP32 firmware"]
-        FW["FSM: FRENTE / VARREDURA / DESVIO<br/>hard stop 20 cm, 500 ms watchdog<br/>heading hold, stall detection"]
+        FW["FSM: FRENTE (forward) / VARREDURA (scan) / DESVIO (avoid)<br/>hard stop 20 cm, 500 ms watchdog<br/>heading hold, stall detection"]
         WEB["Operator page :80"]
     end
     SON["HC-SR04 on a servo"] --> FW
@@ -53,6 +54,23 @@ flowchart LR
 ```
 
 Per camera frame: segment the floor, turn the free-space estimate into one of three vision states, send it (with the heading and the camera-motion index) to the ESP32. The firmware keeps its own reflexes (hard stop, watchdog, arming) whatever the phone does. Details: [docs/architecture.md](docs/architecture.md), wire protocol: [docs/protocolo_ws.md](docs/protocolo_ws.md).
+
+### Portuguese terms you will see
+
+The code, logs and some file names are in Brazilian Portuguese. Quick reference:
+
+| Term | Meaning |
+|---|---|
+| `FRENTE` / `VARREDURA` / `DESVIO` | firmware states: forward / scan (caution, slow) / avoid (maneuver) |
+| `PARADA`, `OLHA`, `RE`, `CURVA`, `ESPERA`, `PRESO` | sub-steps of an avoid: stop, look (sweep the sensor), reverse, turn, wait, stuck |
+| `LIVRE` / `INCERTO` / `OBSTACULO` | vision states: `FREE` / `UNCERTAIN` / `OBSTACLE` (the docs use the English names) |
+| `vis`, `yaw`, `drive`, `avoid`, `m` | messages the phone sends: vision opinion, gyro heading, drive command, avoid command, camera-motion index |
+| `corrida_*.jsonl` / `carrinho_*.jsonl` | run log from the phone / message log from the car (*corrida* = run, *carrinho* = little car) |
+| `explorar` (*Explorar: sensor*, *Explorar: visao*) | "explore": drive on the sensor alone / with vision added |
+| `parar`, `PARAR TUDO` | stop, STOP EVERYTHING (full reset) |
+| `Baixar log`, `Aplicar faixa das rodas`, `Servo do sensor`, `Roda esq./dir. (degraus)` | operator page buttons: download log, apply wheel duty range, sensor servo test, left/right wheel (step) test |
+| `protocolo_ws.md`, `exemplos_de_log/` | WebSocket protocol, log examples |
+| `CARRINHO` | the car's Wi-Fi network name (*little car*) |
 
 Design decisions (problem, choice and evidence for each): [docs/architecture.md#engineering-decisions](docs/architecture.md#engineering-decisions). Highlights:
 
@@ -91,6 +109,7 @@ On the S9 the pipeline computes at ~56 fps on the benchmark video; on the car (l
 
 ## Limitations
 
+- **The car in the demo video crashes, and it should not have.** The ultrasonic sensor sweeps in 15° steps. With the car at a diagonal to the wall, one of those steps would end up facing the wall side-on, the echo would return and the sensor would work around its own limitation (a single beam only echoes back from surfaces close to perpendicular). That did not happen. We then ran into loose-contact (bad wiring) problems on the prototype, and **the project is currently paused**, so the cause was not isolated.
 - **Crash detection by camera (0.7.0)** is covered by the simulator and caught one real crash in the field (26 Nov), but that is a single event: the thresholds (`stall_cam_max` and friends) are starting points to tune with recorded runs.
 - **Hardware quirks shaped the design.** The two drive wheels respond very differently to the same duty, which is why the duty range is stored per wheel and the heading is closed on the gyroscope. The sensor servo had intermittent wiring on the prototype (signal moved to GPIO4); the operator page has a servo test for that.
 - **Vision alone does not solve a wall whose color is close to the floor's.** The color model under-reacts, the edge probe needs a visible baseboard and optical flow did not help. The range sensor covers this case, which is why it is the authority. A learned monocular depth model is the candidate next step.
@@ -116,7 +135,7 @@ Firmware simulator (needs `g++`): `cd sim && g++ -std=c++17 -O1 -static -DESP_AR
 
 **With the car**
 
-*Hardware:* ESP32 dev board, L298N driver, two DC gear motors on the front wheels (rear wheels free), HC-SR04 on a micro servo, an Android phone mounted facing forward (Galaxy S9 here), a 1k/2k divider on the HC-SR04 ECHO line (it is 5 V), a separate supply for the servo with common GND.
+*Hardware:* ESP32 dev board, L298N driver, two DC gear motors on the front wheels (rear wheels free), HC-SR04 on a micro servo, an Android phone mounted facing forward (Galaxy S9 here), a 1k/2k divider on the HC-SR04 ECHO line (it is 5 V), two power sources with a common GND: a 12 V battery pack feeds the L298N, whose 5 V output (plus its GND) powers the ESP32 and the HC-SR04 (this was done to stop constant brownouts); a separate 9 V battery feeds only the servo, stepped down to 5 V by an LM2596 buck module (HW-411).
 
 *Pinout (firmware 0.7.0):*
 
@@ -134,8 +153,8 @@ The wheel directions are fixed in the firmware (`MOTOR_LEFT_INVERT` / `MOTOR_RIG
 
 1. **Firmware.** Copy `car_firmware/secrets.example.h` to `car_firmware/secrets.h` (git-ignored) and set the Wi-Fi password (without it the access point uses a public default). Build `car_firmware/car_firmware.ino` with the Arduino ESP32 core 3.x and the *WebSockets* library (Markus Sattler).
 2. **App.** Build `android/` in Android Studio (Chaquopy runs the Python code; Gradle copies the sources): [docs/android.md](docs/android.md).
-3. **First use through the operator page.** Join the `CARRINHO` Wi-Fi on a second phone and open `http://192.168.4.1`. Run the per-wheel test (*Roda esq./dir. (degraus)*) and *Aplicar faixa das rodas*, then *Servo do sensor*. Press *Explorar: sensor* (sonar only) first; after 4 s the car arms and drives. With the app running on the camera phone, *Explorar: visao* adds the vision. *PARAR TUDO* resets everything.
-4. **Logs.** *Baixar log* on the operator page, or `http://<phone-ip>:8080/logs` for the phone's runs; format in [docs/exemplos_de_log/](docs/exemplos_de_log/README.md). Convert a run video with `python -m tools.video_to_mp4 <log folder>`.
+3. **First use through the operator page.** Join the `CARRINHO` Wi-Fi on a second phone and open `http://192.168.4.1`. Run the per-wheel test (*Roda esq./dir. (degraus)*, "left/right wheel (steps)") and *Aplicar faixa das rodas* ("apply wheel range"), then *Servo do sensor* ("sensor servo"). Press *Explorar: sensor* ("explore: sensor", sonar only) first; after 4 s the car arms and drives. With the app running on the camera phone, *Explorar: visao* ("explore: vision") adds the vision. *PARAR TUDO* ("stop everything") resets everything.
+4. **Logs.** *Baixar log* ("download log") on the operator page, or `http://<phone-ip>:8080/logs` for the phone's runs; format in [docs/exemplos_de_log/](docs/exemplos_de_log/README.md). Convert a run video with `python -m tools.video_to_mp4 <log folder>`.
 
 
 ## Repository layout

@@ -67,9 +67,11 @@ All tunable values live in `config.py`; the firmware parameters are mirrored the
 
 ## Firmware state machine
 
-- **FRENTE**: straight at `v_cruise` (0.35), heading held by `holdStep`; the sensor looks ahead. No motion before the first valid reading.
-- **VARREDURA**: something suspicious (sensor 30-60 cm, or vision UNCERTAIN in vision mode); slow (0.15), back to FRENTE after 0.2 s clear.
-- **DESVIO**: PARADA (0.3 s) → OLHA (servo at -30, -15, +15, +30°) → RE (reverse on credit) → CURVA (turn to the chosen angle by gyro), then VARREDURA. Sub-states ESPERA (re-entry guard) and PRESO (dead end).
+State names are Portuguese in the code; the English meaning is in parentheses (full glossary in the [README](../README.md#portuguese-terms-you-will-see)).
+
+- **FRENTE** (*forward*): straight at `v_cruise` (0.35), heading held by `holdStep`; the sensor looks ahead. No motion before the first valid reading.
+- **VARREDURA** (*scan / caution*): something suspicious (sensor 30-60 cm, or vision UNCERTAIN in vision mode); slow (0.15), back to FRENTE after 0.2 s clear.
+- **DESVIO** (*avoid*): PARADA (*stop*, 0.3 s) → OLHA (*look*: servo at -30, -15, +15, +30°) → RE (*reverse*, on credit) → CURVA (*turn* to the chosen angle by gyro), then VARREDURA. Sub-states ESPERA (*wait*, re-entry guard) and PRESO (*stuck*, dead end).
 
 **"No echo" in three classes** (`centerClass`, always from the median, never the raw ping): `valida` (there is an echo); `livre` (no echo and fresh vision says sector 0 is free, or no vision and no close reading in the last `suspect_ms`); `suspeito` (otherwise). A suspect reading blocks forward motion and starts an avoid without reverse.
 
@@ -108,10 +110,12 @@ Differential drive: two DC motors on an L298N, no steering servo. The ultrasonic
 | Signal | ESP32 pin | Note |
 |---|---|---|
 | HC-SR04 TRIG / ECHO | 23 / 22 | ECHO is 5 V, so it goes through a 1k/2k divider |
-| Sensor servo | 4 | own supply, GND tied to the common ground |
+| Sensor servo | 4 | own supply (9 V battery -> LM2596 (HW-411) buck -> 5 V), GND tied to the common ground |
 | L298N ENA / IN1 / IN2 | 13 / 16 / 17 | left wheel, PWM on ENA |
 | L298N ENB / IN3 / IN4 | 32 / 33 / 21 | right wheel, PWM on ENB, remove the ENB jumper |
 | BOOT button / LED | 0 / 2 | arm and disarm / status |
+
+Power: two sources share a common GND. A 12 V battery pack feeds the L298N; the L298N's own 5 V output (and its GND) powers the ESP32 and the HC-SR04, which was the last change to stop the constant brownouts. A separate 9 V battery feeds only the sensor servo, stepped down to 5 V by the LM2596 (HW-411) buck module.
 
 Motor start-up is staggered (one at a time, never while the servo moves) to avoid brownouts, and the firmware reports the reset reason when it recovers from one.
 

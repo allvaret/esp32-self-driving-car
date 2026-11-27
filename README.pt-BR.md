@@ -11,6 +11,7 @@
   <img src="docs/media/demo_corrida.gif" alt="Replay de uma corrida gravada pela câmera do carro: quadro da câmera, chão segmentado, estado da visão e confiança" width="640">
 </p>
 <p align="center"><sub>Replay de uma corrida gravada pela câmera do próprio carro (24 s de 36). Esquerda: câmera. Direita: segmentação do chão (verde = chão). Embaixo: estado da visão, estado do controlador do replay offline e a confiança relativa <code>r</code> com seus limiares.</sub></p>
+<p align="center"><sub>☹️ <b>Nesta corrida o carrinho bate na parede, e não deveria.</b> O sensor gira de 15 em 15 graus e, com o carro na diagonal em relação à parede, em algum passo ele ficaria "de lado" para ela, o eco voltaria e o sensor contornaria a própria limitação. Infelizmente enfrentamos problemas de mau contato e, no momento, o projeto está pausado. Veja as <a href="#limitações">Limitações</a>.</sub></p>
 
 
 > 🇬🇧 English version: [README.md](README.md). Os documentos técnicos em [`docs/`](docs/README.md) estão em português, exceto as notas de arquitetura e as decisões de engenharia, em inglês.
@@ -91,6 +92,7 @@ No S9 o pipeline calcula a ~56 fps no vídeo de bancada; no carro (câmera ao vi
 
 ## Limitações
 
+- **O carrinho do vídeo de demonstração bate, e não deveria.** O sensor ultrassônico varre de 15 em 15 graus. Com o carro na diagonal em relação à parede, um desses passos ficaria "de lado" para ela, o eco voltaria e o sensor contornaria a própria limitação (um feixe único só devolve eco de superfícies quase perpendiculares). Isso não aconteceu. Em seguida enfrentamos problemas de mau contato na fiação do protótipo e, **no momento, o projeto está pausado**, então a causa não foi isolada.
 - **A detecção de batida pela câmera (0.7.0)** é coberta pelo simulador e pegou uma batida real em campo (26/11), mas foi um único evento: os limiares (`stall_cam_max` e afins) são pontos de partida a ajustar com as corridas gravadas.
 - **Particularidades do hardware moldaram o projeto.** As duas rodas de tração respondem de modo muito diferente ao mesmo duty; por isso a faixa de duty é guardada por roda e o rumo é fechado no giroscópio. O servo do sensor teve fiação intermitente no protótipo (sinal movido para o GPIO4); a página do operador tem um teste do servo para isso.
 - **A visão sozinha não resolve parede de cor próxima à do piso.** O modelo de cor reage pouco, a sonda de bordas precisa de rodapé visível e o fluxo óptico não ajudou. O sensor de distância cobre esse caso, e por isso é a autoridade. Um modelo de profundidade monocular aprendido é o próximo candidato.
@@ -116,7 +118,7 @@ Simulador do firmware (precisa de `g++`): `cd sim && g++ -std=c++17 -O1 -static 
 
 **Com o carro**
 
-*Hardware:* placa ESP32, driver L298N, dois motores DC com caixa de redução nas rodas dianteiras (traseiras livres), HC-SR04 sobre um microservo, um celular Android fixado olhando para frente (Galaxy S9 aqui), divisor 1k/2k na linha ECHO do HC-SR04 (ela é de 5 V) e alimentação separada para o servo com GND comum.
+*Hardware:* placa ESP32, driver L298N, dois motores DC com caixa de redução nas rodas dianteiras (traseiras livres), HC-SR04 sobre um microservo, um celular Android fixado olhando para frente (Galaxy S9 aqui), divisor 1k/2k na linha ECHO do HC-SR04 (ela é de 5 V) e duas fontes com GND comum: bateria de 12 V alimentando o L298N, cuja saída de 5 V (com seu GND) alimenta o ESP32 e o HC-SR04 (para evitar as quedas constantes por brownout); uma bateria de 9 V separada alimenta só o servo, rebaixada para 5 V por um módulo buck LM2596 (HW-411).
 
 *Pinagem (firmware 0.7.0):*
 
