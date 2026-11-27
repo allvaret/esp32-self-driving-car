@@ -1,145 +1,174 @@
 # Self-driving car with classical computer vision
 
-**A small autonomous car whose brain is Python running on a phone, and whose body is an ESP32.** The phone's camera is the only perception: the floor is segmented with color histograms (no neural network or GPU), a state machine decides, and an ESP32 drives the motors and enforces the safety limits. A frame costs ~18 ms on a Samsung S9.
+**A toy car that avoids obstacles using only classical computer vision (no neural network) running on an Android phone, a range sensor and a gyroscope, with an ESP32 as the single executor of every maneuver.**
 
-![status](https://img.shields.io/badge/status-v1%20complete-2ea44f)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![opencv](https://img.shields.io/badge/OpenCV-4.x-5c3ee8)
-![firmware](https://img.shields.io/badge/firmware-ESP32%20(Arduino)-e7352c)
+![firmware](https://img.shields.io/badge/firmware-0.7.0%20(ESP32%20Arduino)-e7352c)
 
 <p align="center">
-  <img src="docs/media/demo_sofa.gif" alt="Replay of the pipeline on a recorded video: camera, segmented floor, vision state, controller state and confidence r" width="720">
+  <img src="docs/media/demo_corrida.gif" alt="Replay of a run recorded by the car's camera: camera frame, segmented floor, vision state and confidence" width="640">
 </p>
-<p align="center"><sub>Replay of a recorded run (10 s, the car heading to a sofa). Left: camera. Right: floor segmentation (green = floor). Bottom: vision state, controller state and the confidence <code>r</code> with its thresholds. The range sensor is mocked and the replay is open loop.</sub></p>
+<p align="center"><sub>Replay of a run recorded by the car's own camera (24 s of 36). Left: camera. Right: floor segmentation (green = floor). Bottom: vision state, controller state of the offline replay and the relative confidence <code>r</code> with its thresholds.</sub></p>
 
-> 🇧🇷 Versão em português: [README.pt-BR.md](README.pt-BR.md)
+<!-- MIDIA 1 (top of README, replaces or complements the GIF above): GIF/MP4 of the real car driving and dodging an obstacle. See docs/media/LISTA_DE_GRAVACAO.md, take 1. -->
+
+> 🇧🇷 Versão em português: [README.pt-BR.md](README.pt-BR.md). The technical documents in [`docs/`](docs/README.md) are in Brazilian Portuguese, except the architecture notes and the engineering decisions, which are in English.
 >
-> **Jump to:** [Engineering decisions](docs/engineering-decisions.md) · [Architecture](docs/architecture.md) · [Results](#results) · [Run it](#running-it) · [Repository layout](#repository-layout)
+> **Jump to:** [What it does](#what-it-does) · [Architecture](#architecture) · [Results](#results) · [Limitations](#limitations) · [Replicate it](#replicate-it) · [Repository layout](#repository-layout) · [Next steps](#next-steps)
 
-## Overview
+## What it does
 
-The goal was to see how far a **classical, explainable** vision pipeline can go on a low-end platform before reaching for a learned model. The car has no map and no training data: it learns what "floor" looks like from the first frames of each run, estimates how much free floor lies ahead, and turns that into a drive command.
+- **Obstacle avoidance by vision + sonar.** The phone learns what "floor" looks like from the first frames of each run (hue-saturation histogram, no training data) and estimates the free floor ahead in five sectors. An ultrasonic sensor on a servo scans the sides; the ESP32 fuses both, with the sensor having the final say.
+- **Heading hold with the gyroscope.** The phone streams its yaw to the ESP32, which runs a PI loop on straights, plus a trim and a per-wheel duty range that are learned and stored in the ESP32's flash (NVS).
+- **Crash detection by the camera.** If the wheels are pushing but the camera sees (almost) no motion, the firmware backs off. The motion index is computed on the phone (`vision/motion.py`) and sent with every vision opinion.
+- **Runs recorded as data.** Each run saves a JSONL log and the camera video on the phone, downloadable from the operator page, to be replayed offline or used as a dataset.
+- **Operator page served by the ESP32** (no app needed): arm, choose the mode, stop, run diagnostics, watch the sensor radar and the vision mask.
 
-The work is split across three layers that communicate through narrow, tested interfaces:
+<!-- MIDIA 3 (operator page): full-screen phone screenshot/recording of the operator page with the expanded vision image. See docs/media/LISTA_DE_GRAVACAO.md, take 3. -->
 
-| Layer | Runs on | Responsibility |
-|---|---|---|
-| **Vision + decision** | Python (PC or phone via Chaquopy) | floor segmentation, free-space estimate, obstacle state machine, controller |
-| **Link** | Wi-Fi (ESP32 soft AP, WebSocket, one JSON message per frame) | commands down, telemetry and logs up |
-| **Body** | ESP32 firmware | motors (L298N), ultrasonic sensor on a servo, watchdog, hard stop |
-
-**Context.** The design was informed by studying how Waymo and Tesla approach perception: a redundant multi-sensor stack on one side, a camera-first stack on the other. This car is a toy-scale take on that trade-off: the camera is the main sensor, and a cheap ultrasonic sensor adds redundancy where the camera is weak. Scale, safety requirements and methods are not comparable.
-
-What I would point to in this project:
-
-- **Vision without training.** Hue-saturation histogram of the floor, back-projection, an automatic threshold from a percentile of the region of interest, and morphology. No dataset, no labels, nothing to retrain when the floor changes.
-- **A decision that does not depend on the frame rate.** The obstacle state is driven by a confidence *relative* to a rolling reference, with hysteresis and persistence expressed in seconds. The same behavior holds at 5, 10 or 20 fps (covered by tests).
-- **Safety in layers.** Vision proposes, the range sensor has the final say, and the firmware enforces a hard stop at 20 cm, a 500 ms command watchdog and an arming button, independent of the Python side.
-- **One codebase, two targets.** The same Python runs on a PC and on the phone. A hardware abstraction layer with mocks lets the whole control loop be replayed from recorded video, so decisions can be validated without the car.
-- **Measured, not assumed.** ~9 ms per frame on a PC and ~18 ms on the S9 (a 30 fps source is processed in real time). On the PC one OpenCV thread beat twelve; on the phone 1 to 4 threads cost the same, so it runs with one.
-- **Each sensor covers the other's blind spot.** Color vision cannot see a wall painted like the floor; the ultrasonic sensor can. The controller is built around that division of labor.
-
-## Status
-
-**v1 complete.** The vision pipeline, controller, firmware and Android app work end to end. Behavior was validated by replaying recorded runs in three scenarios (a sofa with a nearby object, a narrow corridor, and an open space leading to a wall whose color is close to the floor's), by bench tests of the firmware, and by closed-loop runs on the assembled car, with the phone's vision and the ultrasonic sensor driving the ESP32.
-
-Vision alone does not solve the wall of similar color; the range sensor does, and that division of labor is the point of the design. One drive motor was defective when the kit arrived, which limits how well the car executes what is commanded (see [Limitations](#limitations)).
+**Context.** The design was informed by studying how Waymo and Tesla approach perception: a redundant multi-sensor stack on one side, a camera-first stack on the other. This car is a toy-scale take on that trade-off: the camera is the main sensor and a cheap ultrasonic sensor adds redundancy where the camera is weak. Scale, safety requirements and methods are not comparable.
 
 ## Architecture
 
+The ESP32 is the only executor of maneuvers. The phone does not run a state machine: it sends the vision's *opinion*, the *heading* from its gyroscope and, in vision mode, drive commands that the firmware can veto.
+
 ```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 40, "rankSpacing": 110}}}%%
+%%{init: {"flowchart": {"nodeSpacing": 35, "rankSpacing": 70}}}%%
 flowchart LR
-    CAM["Phone camera<br/>CameraX, 640x360"] --> G["vision/ground.py<br/>H-S histogram + back-projection<br/>= floor mask"]
-    CAM --> E["vision/edge_probe.py<br/>long horizontal edges"]
-    G --> D["vision/decision.py<br/>r = p / ref<br/>FREE / UNCERTAIN / OBSTACLE"]
-    D --> C["control/controller.py<br/>FRENTE / VARREDURA / DESVIO"]
-    E --> C
-    C -- "drive / aim<br/>JSON over WebSocket" --> F["ESP32 firmware<br/>watchdog, hard stop 20 cm"]
-    F -- "range /<br/>telemetry" --> C
-    F --> M["L298N + DC motors"]
-    S["HC-SR04 on a servo"] --> F
+    subgraph PHONE["Android phone (Python via Chaquopy)"]
+        CAM["Camera<br/>CameraX 640x360"] --> V["vision/<br/>ground.py: floor mask + 5 sectors<br/>decision.py: FREE / UNCERTAIN / OBSTACLE<br/>motion.py: camera motion"]
+        GYR["Gyroscope<br/>YawSensor.kt"] --> H["control/heading.py"]
+        V --> B["brain.py<br/>vis, yaw, drive, avoid"]
+        H --> B
+        B --> LOG["flight_log.py + video_log.py<br/>JSONL + MJPEG"]
+    end
+    B <-- "WebSocket :81<br/>one JSON per message" --> FW
+    subgraph ESP["ESP32 firmware"]
+        FW["FSM: FRENTE / VARREDURA / DESVIO<br/>hard stop 20 cm, 500 ms watchdog<br/>heading hold, stall detection"]
+        WEB["Operator page :80"]
+    end
+    SON["HC-SR04 on a servo"] --> FW
+    FW --> MOT["L298N + 2 DC motors"]
+    FW --- WEB
 ```
 
-Per frame: segment the floor, turn the free-space estimate into one of three vision states, fuse it with the edge probe and the range sensor in a small state machine, and send a drive command. The ESP32 keeps its own reflexes (hard stop, watchdog, arming) whatever the phone does, and also serves a web page to operate and watch the car. Details, wiring and the operator page: [docs/architecture.md](docs/architecture.md).
+Per camera frame: segment the floor, turn the free-space estimate into one of three vision states, send it (with the heading and the camera-motion index) to the ESP32. The firmware keeps its own reflexes (hard stop, watchdog, arming) whatever the phone does. Details: [docs/architecture.md](docs/architecture.md), wire protocol: [docs/protocolo_ws.md](docs/protocolo_ws.md), execution flow: [docs/desenvolvimento/fluxo_de_execucao.md](docs/desenvolvimento/fluxo_de_execucao.md).
 
-## Engineering decisions
+Design decisions (problem, discarded alternative and evidence for each): [docs/engineering-decisions.md](docs/engineering-decisions.md). Highlights:
 
-Nine decisions, each with the problem, the alternative discarded and the evidence in the repository: floor model learned from the run, threshold derived from data, relative confidence with an "uncertain" state, time in seconds instead of frames, an independent edge cue, sensor-over-vision fusion with firmware reflexes, hardware behind mocks, measured performance, and experiments kept out of the loop. Read them in [docs/engineering-decisions.md](docs/engineering-decisions.md).
+- **Vision without training:** H-S histogram of the floor, back-projection, an automatic threshold from a percentile of the region of interest, morphology. Nothing to retrain when the floor changes.
+- **Frame-rate independent decisions:** relative confidence with hysteresis and persistence in seconds; the same behavior at 5, 10 or 20 fps (covered by tests).
+- **Safety in layers:** vision proposes, the sensor has the final say, the firmware enforces hard stop, watchdog and arming.
+- **Each sensor covers the other's blind spot:** color vision cannot see a wall painted like the floor; the ultrasonic sensor can.
+- **Hardware behind a simulator:** `sim/` runs the real firmware source on the PC against an independent physical model of wiring, wheels, servo and obstacles, so a wiring mistake shows up as a failed scenario.
 
 ## Results
 
-**Replay of recorded runs** (`python -m replay.replay_main`; range sensor mocked from a hand-written timeline, 10 fps). Logs are in [`assets/.../docs/logs/run/`](assets/simulation_Scar/Reframed_videos/docs/logs/run).
-
-| Scenario | Frames | Vision states (free / uncertain / obstacle) | Controller (frente / varredura / desvio) | What happened |
-|---|---|---|---|---|
-| Narrow corridor | 125 | 72 / 53 / 0 | 63 / 62 / 0 | no false obstacle; the car keeps cruising and scanning |
-| Open space, wall of similar color | 189 | 99 / 48 / 42 | 43 / 58 / 88 | edge probe flags the wall at 4.1 s, the sensor trips at 4.5 s (avoidance starts), vision confirms at 4.7 s |
-| Sofa with a nearby object | 105 | 30 / 12 / 63 | 27 / 18 / 60 | vision alone calls the obstacle at 2.1 s and triggers avoidance, with no sensor reading to refute it |
-
 **Cost per frame** (`tools/bench_s9.py`, 848x478 source, 105 to 106 frames, edge probe on):
 
-| Platform (source fps) | Decode | Segmentation | Edge probe | Decision + controller | Total |
+| Platform (source fps) | Decode | Segmentation | Edge probe | Decision | Total |
 |---|---|---|---|---|---|
 | PC, 1 OpenCV thread (10) | 0.4 ms | 5.2 ms | 3.3 ms | < 0.05 ms | 8.5 ms |
 | PC, 12 threads (10) | 0.4 ms | 5.7 ms | 3.9 ms | < 0.05 ms | 9.6 ms |
-| Samsung S9, 1 thread (30) | 2.4 ms | 9.9 ms | 7.6 ms | 0.1 ms | 17.6 ms |
+| Samsung Galaxy S9, 1 thread (30) | 2.4 ms | 9.9 ms | 7.6 ms | 0.1 ms | 17.6 ms |
 
-On the S9 the pipeline computes at ~56 fps, so it keeps up with a 30 fps source (33 ms budget) and has about 5.7x headroom at the 10 fps the car runs at. The full series on the phone (19 runs, 1 to 4 threads) is in [`bench_s9_runs.txt`](assets/simulation_Scar/Reframed_videos/docs/logs/bench/bench_s9_runs.txt); totals stay between 17.5 and 18.1 ms.
+On the S9 the pipeline computes at ~56 fps: it keeps up with a 30 fps source and has ~5.7x headroom at the 10 fps the car runs at. The 19 runs on the phone (1 to 4 threads) stay between 17.5 and 18.1 ms ([series](assets/simulation_Scar/Reframed_videos/docs/logs/bench/bench_s9_runs.txt)), so the vision runs with a single OpenCV thread.
 
-**Tests:** 24 automated tests (`pytest tests`) cover the controller state machine, the decision thresholds at several frame rates, the run loop, the Android frame-conversion path and an end-to-end synthetic pipeline.
+**Tests:** 73 automated tests (`python -m pytest tests -q`) cover the vision decision at several frame rates, the heading controller, the brain/link logic, the live path as packaged for the phone, the log/video writers, the Python/firmware parameter mirror and the firmware itself, through the simulator.
+
+**Firmware simulator:** 20 lettered scenarios plus the protocol and Python/firmware parameter checks, 143 checks in total (`sim/check_firmware.py`), all passing: diagonal wall with no echo, stopped obstacle (wait, then maneuver), side choice with and without echo, stale vision ignored, turn to an angle with and without yaw, full reset, sensor veto in phone mode, heading hold with unequal wheels, on-page diagnostics, reverse credit, sensor-servo faults and stall detection by camera motion.
+
+**Offline replays** of recorded videos with a scripted sensor (`python -m replay.replay_main`), using the frozen v1 controller as the fusion reference:
+
+| Scenario | Frames | Vision states (free / uncertain / obstacle) | What happened |
+|---|---|---|---|
+| Narrow corridor | 125 | 72 / 53 / 0 | no false obstacle |
+| Open space, wall of similar color | 189 | 99 / 48 / 42 | edge probe flags the wall at 4.1 s, the sensor trips at 4.5 s, vision confirms at 4.7 s |
+| Sofa with a nearby object | 105 | 30 / 12 / 63 | vision alone calls the obstacle at 2.1 s |
+
+**Field validation** (20 to 26 Nov 2026, firmware 0.5.x to 0.7.0): per-wheel duty ranges, the heading-hold gains and the trim were measured on the car with the phone's gyroscope; the wiring was confirmed by the gyroscope, not by assumption. Day-by-day record: [docs/desenvolvimento/diario_de_campo.md](docs/desenvolvimento/diario_de_campo.md). Example logs: [docs/exemplos_de_log/](docs/exemplos_de_log/).
+
+<!-- MIDIA 2 (crash + reverse + dodge): 10-15 s recording of the car hitting something, backing off and dodging. See docs/media/LISTA_DE_GRAVACAO.md, take 2. -->
 
 ## Limitations
 
-- **Motion fidelity is limited by the hardware.** One drive motor had a gearbox defect from the start. The two sides diverge, the faster one draws more current and accelerates further, so even a straight command drifts into a curve. A software correction of the motor force did not hold. Closed-loop runs were qualitative; the quantitative results here come from replays and benchmarks, and the motor-force constants are the only values calibrated on the car.
-- **Vision alone does not solve a wall whose color is close to the floor's.** The color model under-reacts, the edge probe needs a visible baseboard, and optical flow did not help. The range sensor covers this case, which is why the controller treats it as the authority. A learned monocular depth model is the candidate next step.
-- **Replays use a scripted sensor.** The timelines were written by hand from the videos, so they show that the logic behaves sensibly, not detection accuracy. There is no labeled benchmark.
-- **Other parameters are demo or hypothesis values** (speeds, turn rate, several thresholds); see [`docs/parametros_a_calibrar.md`](docs/parametros_a_calibrar.md).
-- **The floor model assumes free floor at the start** (it learns from the first 0.9 s) and the camera is monocular, so distance comes only from the ultrasonic sensor.
-- **Narrow validation set and legacy simulator.** Three recordings in one home, of which only the sofa video is in the repository (the others show private spaces; their logs are). `sim/` targets firmware v0.2 and does not build against v0.3.
+- **Crash detection by camera (0.7.0)** is implemented and covered by the simulator, but its field validation is planned: the thresholds (`stall_cam_max` and friends) are starting points to tune with recorded runs.
+- **Hardware quirks shaped the design.** The two drive wheels respond very differently to the same duty, which is why the duty range is stored per wheel and the heading is closed on the gyroscope. The sensor servo had intermittent wiring on the prototype (signal moved to GPIO4); the operator page has a servo test for that.
+- **Vision alone does not solve a wall whose color is close to the floor's.** The color model under-reacts, the edge probe needs a visible baseboard and optical flow did not help. The range sensor covers this case, which is why it is the authority. A learned monocular depth model is the candidate next step.
+- **Replays use a scripted sensor.** They show that the logic behaves sensibly, not detection accuracy. There is no labeled benchmark yet.
+- **The floor model assumes free floor at the start** (it learns from the first 0.9 s) and the camera is monocular: distance comes only from the ultrasonic sensor.
+- **One environment.** All validation was done in one home with a light tiled floor; other floors and lighting are untested.
 
-## Running it
+## Replicate it
 
 **Without the car** (Python 3.10 or 3.11):
 
 ```bash
 python -m venv venv && source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt pytest
+pip install -r requirements.txt pytest                 # PC only; requirements_phone.txt is for Chaquopy
 
-# run the full loop on the sofa video (sensor mocked) and print the controller transitions
-python main.py assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4 --csv run_sofa.csv
-
-# replay with a scripted sensor scenario, produces a CSV and a plot
+python -m pytest tests -q
+python main.py assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4 --csv run.csv   # vision loop on a video
 python -m replay.replay_main assets/simulation_Scar/Reframed_videos/10sec_reframed10.mp4 --out run_sofa
-
-python -m tools.make_demo        # regenerates docs/media/demo_sofa.gif
-python -m pytest tests -q        # 24 tests
+python -m tools.make_demo                              # regenerates docs/media/demo_replay.gif
 ```
 
-**With the car** (ESP32, L298N, HC-SR04 on a servo, an Android phone):
+Firmware simulator (needs `g++`): `cd sim && g++ -std=c++17 -O1 -static -DESP_ARDUINO_VERSION_MAJOR=3 -I. -o sim3 sim.cpp && python check_firmware.py`
 
-1. Firmware: copy `car_firmware/secrets.example.h` to `secrets.h` and set the Wi-Fi password, then build `car_firmware/car_firmware.ino` with the Arduino ESP32 core 3.x and the *WebSockets* library (Markus Sattler). Hold BOOT (or press *Explore* on the operator page) and wait 4 s to arm. Wiring and protocol: [`docs/architecture.md`](docs/architecture.md), [`docs/protocolo_ws.md`](docs/protocolo_ws.md).
-2. Phone: build the `android/` project in Android Studio (Chaquopy runs the Python code; Gradle copies the sources). Step by step: [`docs/android.md`](docs/android.md).
-3. Join the `CARRINHO` Wi-Fi network and open `http://192.168.4.1`.
+**With the car**
+
+*Hardware:* ESP32 dev board, L298N driver, two DC gear motors on the front wheels (rear wheels free), HC-SR04 on a micro servo, an Android phone mounted facing forward (Galaxy S9 here), a 1k/2k divider on the HC-SR04 ECHO line (it is 5 V), a separate supply for the servo with common GND.
+
+*Pinout (firmware 0.7.0):*
+
+| Function | GPIO | Notes |
+|---|---|---|
+| Left wheel (L298N ENA / IN1 / IN2) | **13** / 16 / 17 | ENA moved from GPIO19, which was defective on the prototype |
+| Right wheel (ENB / IN3 / IN4) | 32 / 33 / 21 | remove the ENB jumper on the L298N |
+| HC-SR04 TRIG / ECHO | 23 / 22 | ECHO through the divider |
+| Sensor servo signal | **4** | GPIO18 did not output PWM on the prototype |
+| Arm button / LED | 0 (BOOT) / 2 | |
+
+The wheel directions are fixed in the firmware (`MOTOR_LEFT_INVERT` / `MOTOR_RIGHT_INVERT` = 1 for this car); with other motors or wiring, the *per-wheel test* on the operator page tells you which wheel turned and which way, measured by the phone's gyroscope.
+
+*Steps:*
+
+1. **Firmware.** Copy `car_firmware/secrets.example.h` to `car_firmware/secrets.h` (git-ignored) and set the Wi-Fi password (without it the access point uses a public default). Build `car_firmware/car_firmware.ino` with the Arduino ESP32 core 3.x and the *WebSockets* library (Markus Sattler).
+2. **App.** Build `android/` in Android Studio (Chaquopy runs the Python code; Gradle copies the sources): [docs/android.md](docs/android.md).
+3. **First use through the operator page.** Join the `CARRINHO` Wi-Fi on a second phone and open `http://192.168.4.1`. Run the per-wheel test (*Roda esq./dir. (degraus)*) and *Aplicar faixa das rodas*, then *Servo do sensor*. Press *Explorar: sensor* (sonar only) first; after 4 s the car arms and drives. With the app running on the camera phone, *Explorar: visao* adds the vision. *PARAR TUDO* resets everything.
+4. **Logs.** *Baixar log* on the operator page, or `http://<phone-ip>:8080/logs` for the phone's runs; format in [docs/como_ler_o_log.md](docs/como_ler_o_log.md). Convert a run video with `python -m tools.video_to_mp4 <log folder>`.
+
+<!-- MIDIA 4 (log download): screenshot of the /logs page in the phone browser. See docs/media/LISTA_DE_GRAVACAO.md, take 4. -->
+<!-- MIDIA 5 (hardware photo): photo of the assembled car with the current wiring, to sit next to the pinout table. See docs/media/LISTA_DE_GRAVACAO.md, take 5. -->
 
 ## Repository layout
 
 ```
-vision/         floor segmentation, decision state machine, free-space sectors, edge probe
-control/        hardware abstraction (hal.py), heading hold, mocks for tests; the v1 controller is frozen
-config.py       every tunable value in one place
-main.py         live vision path (StreamRunner); no decisions
-brain.py, viz.py   phone side of the link to the ESP32 (opinion + heading), local log, MJPEG viewer
-replay/         offline loop and replay with a mocked sensor (not part of the live path)
-car_firmware/   ESP32 firmware
-android/        Android app (Chaquopy + CameraX)
-sim/            host simulator for firmware v0.2 (legacy)
-tools/          benchmarks, frame extraction, labeling, demo GIF
-tests/          24 tests
-docs/           architecture, design decisions, protocol, calibration list
-assets/         sofa video, logs and labels
+vision/         floor segmentation, decision state machine, free-space sectors, camera motion, edge probe
+control/        heading hold (live); hal.py, mocks.py and the frozen v1 controller (replay and tests only)
+config.py       every tunable value in one place (firmware parameters are mirrored and checked by a test)
+main.py         live vision path (StreamRunner); no maneuver decisions
+brain.py        link to the ESP32: vision opinion, heading, drive/avoid, run log and video
+viz.py          MJPEG viewer of the vision, served by the phone
+car_firmware/   ESP32 firmware (FSM, motors, heading hold, operator page)
+android/        Android app (Chaquopy + CameraX + gyroscope)
+sim/            firmware simulator on the PC with an independent physical model
+replay/         offline replays with a scripted sensor (not in the live path)
+tools/          WebSocket link, run logs, video converters, benchmarks, demo GIF
+tests/          73 tests
+docs/           documentation (index in docs/README.md), example logs, media
+assets/         recorded videos for replays and benchmarks
 ```
+
+Where to start reading the code: [docs/README.md](docs/README.md).
+
+## Next steps
+
+- **Learn from the recorded runs.** Every run is already a dataset (frames + vision opinion + sonar + gyro + commands). Next: label the crashes and free paths from those runs and train a small model for monocular depth or free-space, comparing it against the classical pipeline.
+- Field validation of crash detection and tuning of its thresholds with the recorded runs.
+- A labeled benchmark for the vision decision.
 
 ## License
 
