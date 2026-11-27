@@ -16,3 +16,6 @@ sim/sim3.exe
 
 # segredos locais do firmware
 car_firmware/secrets.h
+
+# dados de campo brutos (local; sao muitos MB, vao num Release do GitHub). Exemplos pequenos ficam em docs/exemplos_de_log/
+docs/logs/

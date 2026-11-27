@@ -40,7 +40,7 @@ Each entry is a problem I hit, what I chose, and the evidence in the repository.
 ## 8. Measure before optimizing, and leave cores free
 **Problem:** the budget is 100 ms per frame at 10 fps (33 ms at 30 fps) on a 2018 phone.
 **Decision:** frames are downscaled to 320 px wide before processing, and OpenCV is limited to one thread. A benchmark per stage showed that segmentation (~5 ms) and the edge probe (~3.5 ms) dominate, while decision and controller cost under 0.05 ms.
-**Evidence:** `tools/bench_s9.py`; logs in `docs/logs/bench/`. On the PC, 8.5 ms per frame with 1 thread against 9.6 ms with 12. On the S9, 17.5 to 18.1 ms with 1, 2, 3 or 4 threads, so the extra threads buy nothing and one is used.
+**Evidence:** `tools/bench_s9.py`; logs in `assets/simulation_Scar/Reframed_videos/docs/logs/bench/`. On the PC, 8.5 ms per frame with 1 thread against 9.6 ms with 12. On the S9, 17.5 to 18.1 ms with 1, 2, 3 or 4 threads, so the extra threads buy nothing and one is used.
 
 ## 9. Keep experiments out of the run loop
 Optical flow was implemented and logged, then dropped: it did not solve the hardest case (the wall whose color is close to the floor's). The experiment file was removed from the repository (it was an exact copy of `edge_probe.py`); it is in the git history.
