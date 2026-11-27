@@ -1,4 +1,4 @@
-"""replay/replay_decision.py - reproduz vision/decision.py sobre um coverage.csv (sem video).
+"""replay/replay_decision.py [LEGADO: fora do caminho ao vivo] - reproduz vision/decision.py sobre um coverage.csv (sem video).
 
 Uso (da raiz do repositorio):
     python -m replay.replay_decision coverage_sofa.csv
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("csv")
     ap.add_argument("--out", default=None)
-    ap.add_argument("--config", default=None, help="config.json (padrao: valores DEMO)")
+    ap.add_argument("--config", default=None, help="config.json (padrao: valores iniciais)")
     a = ap.parse_args()
     dcfg = Config.load(a.config).decision
     base = a.out or a.csv.rsplit(".", 1)[0].replace("coverage", "dec")

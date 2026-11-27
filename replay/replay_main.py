@@ -1,4 +1,4 @@
-"""replay/replay_main.py - esqueleto do main em tempo real, alimentado por VIDEO + sensor MOCK.
+"""replay/replay_main.py - esqueleto [LEGADO: fora do caminho ao vivo; usa o Controller v1 congelado] do main em tempo real, alimentado por VIDEO + sensor MOCK.
 
 Por frame:  frame -> ground (mascara/prob) -> decision.py (estado da visao)
                   -> edge_probe (borda proxima?)  -> controller (fusao + FSM)
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     ap.add_argument("video")
     ap.add_argument("--scenario", default=None, help="CSV t,center_m,left_m,right_m (padrao: tudo livre)")
     ap.add_argument("--out", default="run")
-    ap.add_argument("--config", default=None, help="config.json (padrao: valores DEMO)")
+    ap.add_argument("--config", default=None, help="config.json (padrao: valores iniciais)")
     ap.add_argument("--thr", default="auto")
     ap.add_argument("--no-edges", action="store_true")
     ap.add_argument("--canny", default=None, help="LO,HI fixos p/ as bordas (ex.: 8,24)")

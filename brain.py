@@ -1,6 +1,6 @@
 """brain.py - cola entre a visao (StreamRunner) e o ESP32 via WebSocket. UNICO dono da conexao.
 
-Caminho 1: o ESP32 e o UNICO executor de manobras. O celular NAO tem maquina de estados: so
+Arquitetura "ESP32 executor": o ESP32 e o UNICO executor de manobras. O celular NAO tem maquina de estados: so
   - narra a OPINIAO da visao ao ESP32: {"t":"vis","ok":0|1,"s":[5 ints],"m":mov}  (~10 Hz; s = setores livres
     0..100 em -30,-15,0,+15,+30 graus; ok=0 = sem opiniao: calibrando/erro; m = movimento da camera
     (vision/motion.py), vai mesmo com ok=0: o ESP32 detecta BATIDA com ele (rodas empurrando e imagem parada))
@@ -23,7 +23,7 @@ Motivacao: o visor manda {"t":"goal","g":"explorar","src":"sensor"|"visao"} (o E
   na reconexao do WS ele so reenvia o mode do src atual.
   goal "parar"/"nenhuma"/None, ou ESP32 desarmado: zera goal/src lembrados. O integrador de yaw zera
   enquanto desarmado e uma vez quando a motivacao acaba; armado sem goal (diagnostico) ele integra.
-Parametros abaixo [DEMO]; filtro/vies do giroscopio em config.HeadingConfig; correcao de rumo em
+Parametros abaixo: valores iniciais; filtro/vies do giroscopio em config.HeadingConfig; correcao de rumo em
 config.ControlConfig.hold_* (espelho dos Params do firmware).
 """
 import json
@@ -37,7 +37,7 @@ from tools import video_log
 from tools.flight_log import FlightLog
 from tools.ws_link import WsLink
 
-# ----------------------------- parametros [DEMO] -----------------------------
+# ----------------------------- parametros (valores iniciais) -----------------------------
 URL = "ws://192.168.4.1:81/"
 V_FREE = 0.35        # velocidade em LIVRE (normalizada 0..1, o ESP32 aplica pwm_min/pwm_max)
 V_SLOW = 0.15        # velocidade em INCERTO

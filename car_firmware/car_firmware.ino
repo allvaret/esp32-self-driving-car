@@ -1,7 +1,7 @@
 /*
- * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.6.3
+ * car_firmware.ino - carrinho autonomo (ESP32 + L298N + HC-SR04 em servo)       v0.7.0
  *
- * CAMINHO 1: o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
+ * ARQUITETURA "ESP32 EXECUTOR": o ESP32 e o UNICO executor de manobras. O celular nao tem maquina de estados: so manda
  * a OPINIAO da visao ({"t":"vis"}) e o rumo do giroscopio ({"t":"yaw"}). Quem para, varre e desvia e este arquivo.
  *
  * DOIS MODOS (o visor escolhe pela FONTE do goal: "Explorar: sensor" = auto, "Explorar: visao" = phone):
@@ -25,7 +25,7 @@
  *   - RUMO EM RETA corrigido aqui (holdStep), nos dois modos, com o yaw do celular e um trim aprendido (NVS).
  *   - goal "parar", arm false ou BOOT desarmando: reset completo (modo padrao, FSM, RTC limpo).
  * Fiacao, comandos e testes de bancada: docs/protocolo_ws.md
- * Valores [DEMO]: calibrar (ver docs/parametros_a_calibrar.md). Mantenha coerente com config.py.
+ * Valores iniciais: ajuste ao replicar com outro hardware (ver docs/parametros.md). Mantenha coerente com config.py.
  */
 #include <Arduino.h>
 #if __has_include("esp_arduino_version.h")
@@ -115,7 +115,7 @@ struct Params {
   // carro (calibrar com a bateria). trim_left/right: ganho fixo da roda ESQUERDA/DIREITA fisica.
   // diff_gain: curva diferencial, L = v + s*diff_gain (roda esquerda), R = v - s*diff_gain (direita); s > 0 = direita.
   float trim_left = 1.0f, trim_right = 1.0f, diff_gain = 0.6f;
-  float pwm_min = 130, pwm_max = 150, slew_per_s = 2.0f;   // [DEMO] valores atuais do carro
+  float pwm_min = 130, pwm_max = 150, slew_per_s = 2.0f;   // [inicial] valores atuais do carro
   // faixa de duty POR RODA (comando 0..1 -> pwm_min_x..pwm_max_x); -1 = usa pwm_min/pwm_max. Medir com o teste por
   // roda (o visor sugere e aplica: mesma velocidade nas duas rodas para o mesmo comando). Gravados na NVS pelo cfg.
   float pwm_min_l = -1, pwm_max_l = -1, pwm_min_r = -1, pwm_max_r = -1;
@@ -136,7 +136,7 @@ struct Params {
   float hold_psi_max = 30, hold_pwm_max = 200;
   // trim aprendido: integrador lento do termo hold_ki*psi (por s), persiste entre trechos e em NVS.
   float trim_rate = 0.5f, trim_max = 1.5f;
-  float sensor_trim_deg = 0;              // [DEMO] corrige o zero do servo do sensor
+  float sensor_trim_deg = 0;              // [inicial] corrige o zero do servo do sensor
   float fallback_auto = 1;                // 1 = sem celular, ESP32 segue so com o sensor; 0 = para
 };
 static Params P;

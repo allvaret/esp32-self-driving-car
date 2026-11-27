@@ -1,7 +1,7 @@
-"""replay/offline.py - loop OFFLINE (pasta de frames ou video) com Controller + sensor MOCK.
+"""replay/offline.py - loop OFFLINE [LEGADO: fora do caminho ao vivo; usa o Controller v1 congelado] (pasta de frames ou video) com Controller + sensor MOCK.
 
 Era o Runner do main.py. O caminho ao vivo (main.StreamRunner) NAO usa nada daqui: o ESP32 e o
-unico executor de manobras (Caminho 1). Isto serve a replay, testes, tools/make_demo.py e ao app de
+unico executor de manobras (arquitetura "ESP32 executor"). Isto serve a replay, testes, tools/make_demo.py e ao app de
 bancada (MainActivity -> android_entry.run_main), que por isso copia este arquivo no syncPython.
 
 Uso:  python -m replay.offline <pasta_ou_video> [--scenario cenario.csv] [--csv saida.csv]

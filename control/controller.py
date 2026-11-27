@@ -1,6 +1,6 @@
 """control/controller.py - CONGELADO: referencia v1, NAO usado ao vivo.
 
-Decisao do Caminho 1: o ESP32 (car_firmware.ino) e o UNICO executor de manobras; o S9 manda so a
+Arquitetura "ESP32 executor": o ESP32 (car_firmware.ino) e o UNICO executor de manobras; o S9 manda so a
 opiniao da visao e o rumo do giroscopio (brain.py). Este arquivo fica como referencia da logica
 e e usado apenas por replay/, tools/bench_s9.py e testes. Nao importe no caminho ao vivo.
 
@@ -26,7 +26,7 @@ o proximo DESVIO vira ESPERA (parado) por guard_backoff_s[nivel]; o nivel sobe a
 reentrada e zera depois de uma janela sem DESVIO. Evita o loop re/curva/re/curva com
 uma pessoa (ou obstaculo) que volta para a frente do carro.
 
-Todos os tempos em SEGUNDOS (independem do fps). Parametros: config.py (todos [DEMO]).
+Todos os tempos em SEGUNDOS (independem do fps). Parametros: config.py (valores iniciais).
 V1.5 (fora do escopo): curva ANTES do obstaculo; deteccao de obstaculo movel pela
 taxa de variacao da leitura; veto da visao para desnivel/escada.
 """

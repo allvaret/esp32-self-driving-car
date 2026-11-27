@@ -52,7 +52,7 @@ class MemoryLink:
 
 class SerialLink:
     """USB serial (JSON por linha). port: 'COM3', '/dev/ttyUSB0' ou 'loop://' (teste).
-    NAO testado em control real; testado apenas em loopback."""
+    Validado em loopback; validacao em campo planejada."""
 
     def __init__(self, port, baud=115200):
         import serial                                   # pip install pyserial
