@@ -1,6 +1,6 @@
 # Protocolo celular <-> ESP32 (firmware 0.7.0)
 
-**Caminho 1:** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
+**Arquitetura "ESP32 executor":** o ESP32 e o UNICO executor de manobras. O celular (S9) nao tem maquina de estados: manda a
 *opiniao da visao* (`vis`) e o *rumo do giroscopio* (`yaw`) e, na fonte "visao", o `drive` e o `avoid`.
 
 ## Rede
@@ -13,7 +13,7 @@
 ## Fiacao dos motores (L298N)
 | Pino ESP32 | L298N | Saida | Roda (tracao so nas dianteiras; traseiras livres) | No firmware |
 |---|---|---|---|---|
-| 19 / 16 / 17 | ENA / IN1 / IN2 | OUT1 / OUT2 | dianteira **ESQUERDA** | `curL`, `L`, `trim_left`, `MOTOR_LEFT_INVERT` |
+| 13 / 16 / 17 | ENA / IN1 / IN2 | OUT1 / OUT2 | dianteira **ESQUERDA** | `curL`, `L`, `trim_left`, `MOTOR_LEFT_INVERT` |
 | 32 / 33 / 21 | ENB / IN3 / IN4 | OUT3 / OUT4 | dianteira **DIREITA** | `curR`, `R`, `trim_right`, `MOTOR_RIGHT_INVERT` |
 
 Curva diferencial: `L = v + s*diff_gain`, `R = v - s*diff_gain`; `s > 0` = direita (roda esquerda mais rapida).

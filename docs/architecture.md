@@ -37,7 +37,7 @@ Each frame goes through the same path, on the PC or on the phone. **Decision (pa
 | Phone app | `android/` | CameraX frames to Python through Chaquopy |
 | Firmware | `car_firmware/` | JSON, one message per line, same format on serial and WebSocket; soft AP `CARRINHO`, HTTP on 80, WebSocket on 81 |
 
-All tunable values live in one `config.py`, and the ones that still need measuring on the real car are listed in [`docs/parametros_a_calibrar.md`](parametros_a_calibrar.md). The wire protocol is documented in [`docs/protocolo_ws.md`](protocolo_ws.md).
+All tunable values live in one `config.py`, and the ones that depend on the hardware are starting points to adjust when replicating the car (status in [`parametros.md`](parametros.md)). The wire protocol (one JSON message per line) is defined by `brain.py` on the phone side and `car_firmware/car_firmware.ino` on the ESP32 side.
 
 ## Operator view
 
@@ -59,8 +59,8 @@ Differential drive: two DC motors on an L298N, no steering servo. The ultrasonic
 | Signal | ESP32 pin | Note |
 |---|---|---|
 | HC-SR04 TRIG / ECHO | 23 / 22 | ECHO is 5 V, so it goes through a 1k/2k divider |
-| Sensor servo | 18 | |
-| L298N ENA / IN1 / IN2 | 19 / 16 / 17 | PWM on ENA |
+| Sensor servo | 4 | |
+| L298N ENA / IN1 / IN2 | 13 / 16 / 17 | PWM on ENA |
 | L298N ENB / IN3 / IN4 | 32 / 33 / 21 | PWM on ENB, remove the ENB jumper |
 | BOOT button / LED | 0 / 2 | arm and disarm / status |
 
