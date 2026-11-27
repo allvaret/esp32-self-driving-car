@@ -12,7 +12,6 @@
 </p>
 <p align="center"><sub>Replay de uma corrida gravada pela câmera do próprio carro (24 s de 36). Esquerda: câmera. Direita: segmentação do chão (verde = chão). Embaixo: estado da visão, estado do controlador do replay offline e a confiança relativa <code>r</code> com seus limiares.</sub></p>
 
-<!-- MIDIA 1 (topo do README, substitui ou complementa o GIF acima): GIF/MP4 do carro de verdade andando e desviando de um obstáculo. Ver docs/media/LISTA_DE_GRAVACAO.md, tomada 1. -->
 
 > 🇬🇧 English version: [README.md](README.md). Os documentos técnicos em [`docs/`](docs/README.md) estão em português, exceto as notas de arquitetura e as decisões de engenharia, em inglês.
 >
@@ -26,7 +25,6 @@
 - **Corridas gravadas como dados.** Cada corrida salva um log JSONL e o vídeo da câmera no celular, baixáveis pela página do operador, para replay offline ou uso como conjunto de dados.
 - **Página do operador servida pelo ESP32** (sem app): armar, escolher o modo, parar, rodar diagnósticos, ver o radar do sensor e a máscara da visão.
 
-<!-- MIDIA 3 (visor): print/gravação em tela cheia do visor no celular, com a imagem da visão expandida. Ver docs/media/LISTA_DE_GRAVACAO.md, tomada 3. -->
 
 **Contexto.** O projeto nasceu do estudo de como Waymo e Tesla tratam a percepção: de um lado, vários sensores redundantes; do outro, uma pilha baseada só em câmeras. O carrinho é uma versão em miniatura desse dilema: a câmera é o sensor principal e um sensor ultrassônico barato dá redundância onde a câmera é fraca. Escala, requisitos de segurança e métodos não são comparáveis.
 
@@ -54,9 +52,9 @@ flowchart LR
     FW --- WEB
 ```
 
-Por quadro: segmenta o chão, converte a estimativa de espaço livre em um de três estados da visão e envia (com o rumo e o índice de movimento da câmera) ao ESP32. O firmware mantém seus próprios reflexos (parada, watchdog, armação) independentemente do celular. Detalhes: [docs/architecture.md](docs/architecture.md); protocolo: [docs/protocolo_ws.md](docs/protocolo_ws.md); fluxo de execução: [docs/desenvolvimento/fluxo_de_execucao.md](docs/desenvolvimento/fluxo_de_execucao.md).
+Por quadro: segmenta o chão, converte a estimativa de espaço livre em um de três estados da visão e envia (com o rumo e o índice de movimento da câmera) ao ESP32. O firmware mantém seus próprios reflexos (parada, watchdog, armação) independentemente do celular. Detalhes: [docs/architecture.md](docs/architecture.md); protocolo: [docs/protocolo_ws.md](docs/protocolo_ws.md).
 
-Decisões de projeto (problema, alternativa descartada e evidência de cada uma): [docs/engineering-decisions.md](docs/engineering-decisions.md). Destaques:
+Decisões de projeto (problema, escolha e evidência de cada uma): [docs/architecture.md#engineering-decisions](docs/architecture.md#engineering-decisions). Destaques:
 
 - **Visão sem treino:** histograma H-S do chão, retroprojeção, limiar automático por percentil da região de interesse, morfologia. Nada a retreinar quando o piso muda.
 - **Decisão independente da taxa de quadros:** confiança relativa com histerese e persistência em segundos; o mesmo comportamento a 5, 10 ou 20 fps (coberto por testes).
@@ -74,7 +72,7 @@ Decisões de projeto (problema, alternativa descartada e evidência de cada uma)
 | PC, 12 threads (10) | 0,4 ms | 5,7 ms | 3,9 ms | < 0,05 ms | 9,6 ms |
 | Samsung Galaxy S9, 1 thread (30) | 2,4 ms | 9,9 ms | 7,6 ms | 0,1 ms | 17,6 ms |
 
-No S9 o pipeline calcula a ~56 fps: acompanha uma fonte de 30 fps e sobra ~5,7x de folga aos 10 fps em que o carro roda. As 19 execuções no celular (1 a 4 threads) ficam entre 17,5 e 18,1 ms ([série](assets/simulation_Scar/Reframed_videos/docs/logs/bench/bench_s9_runs.txt)); por isso a visão roda com uma única thread do OpenCV.
+No S9 o pipeline calcula a ~56 fps no vídeo de bancada; no carro (câmera ao vivo 640x360, mais setores, movimento e registro) processou de 22 a 26 quadros por segundo, com ~21 ms por quadro, um quinto do orçamento de 100 ms. O vídeo da corrida é gravado a 10 fps. As 19 execuções no celular (1 a 4 threads) ficam entre 17,5 e 18,1 ms ([série](assets/simulation_Scar/Reframed_videos/docs/logs/bench/bench_s9_runs.txt)); por isso a visão roda com uma única thread do OpenCV.
 
 **Testes:** 73 testes automatizados (`python -m pytest tests -q`) cobrem a decisão da visão em várias taxas de quadros, o controlador de rumo, a lógica do brain e do enlace, o caminho ao vivo como empacotado para o celular, os gravadores de log e vídeo, o espelho de parâmetros Python/firmware e o próprio firmware, pelo simulador.
 
@@ -88,13 +86,12 @@ No S9 o pipeline calcula a ~56 fps: acompanha uma fonte de 30 fps e sobra ~5,7x 
 | Espaço aberto, parede de cor parecida | 189 | 99 / 48 / 42 | a sonda de bordas acusa a parede em 4,1 s, o sensor dispara em 4,5 s, a visão confirma em 4,7 s |
 | Sofá com objeto próximo | 105 | 30 / 12 / 63 | só a visão chama o obstáculo em 2,1 s |
 
-**Validação em campo** (20 a 26/11/2026, firmware 0.5.x a 0.7.0): faixas de duty por roda, ganhos do rumo e trim foram medidos no carro com o giroscópio do celular; a fiação foi confirmada pelo giroscópio, não por suposição. Registro dia a dia: [docs/desenvolvimento/diario_de_campo.md](docs/desenvolvimento/diario_de_campo.md). Logs de exemplo: [docs/exemplos_de_log/](docs/exemplos_de_log/).
+**Validação em campo** (20 a 26/11/2026, firmware 0.5.x a 0.7.0): faixas de duty por roda, ganhos do rumo e trim foram medidos no carro com o giroscópio do celular; a fiação foi confirmada pelo giroscópio, não por suposição. Logs de exemplo e como lê-los: [docs/exemplos_de_log/](docs/exemplos_de_log/).
 
-<!-- MIDIA 2 (batida + ré + desvio): gravação de 10 a 15 s do carro batendo, dando ré e desviando. Ver docs/media/LISTA_DE_GRAVACAO.md, tomada 2. -->
 
 ## Limitações
 
-- **A detecção de batida pela câmera (0.7.0)** está implementada e coberta pelo simulador, mas a validação em campo está planejada: os limiares (`stall_cam_max` e afins) são pontos de partida a ajustar com as corridas gravadas.
+- **A detecção de batida pela câmera (0.7.0)** é coberta pelo simulador e pegou uma batida real em campo (26/11), mas foi um único evento: os limiares (`stall_cam_max` e afins) são pontos de partida a ajustar com as corridas gravadas.
 - **Particularidades do hardware moldaram o projeto.** As duas rodas de tração respondem de modo muito diferente ao mesmo duty; por isso a faixa de duty é guardada por roda e o rumo é fechado no giroscópio. O servo do sensor teve fiação intermitente no protótipo (sinal movido para o GPIO4); a página do operador tem um teste do servo para isso.
 - **A visão sozinha não resolve parede de cor próxima à do piso.** O modelo de cor reage pouco, a sonda de bordas precisa de rodapé visível e o fluxo óptico não ajudou. O sensor de distância cobre esse caso, e por isso é a autoridade. Um modelo de profundidade monocular aprendido é o próximo candidato.
 - **Os replays usam sensor roteirizado.** Mostram que a lógica se comporta de forma sensata, não a acurácia de detecção. Ainda não há benchmark rotulado.
@@ -138,10 +135,8 @@ O sentido de giro de cada roda é fixo no firmware (`MOTOR_LEFT_INVERT` / `MOTOR
 1. **Firmware.** Copie `car_firmware/secrets.example.h` para `car_firmware/secrets.h` (ignorado pelo git) e defina a senha do Wi-Fi (sem ele, o ponto de acesso usa uma senha padrão pública). Compile `car_firmware/car_firmware.ino` com o core ESP32 3.x do Arduino e a biblioteca *WebSockets* (Markus Sattler).
 2. **App.** Compile `android/` no Android Studio (o Chaquopy roda o código Python; o Gradle copia as fontes): [docs/android.md](docs/android.md).
 3. **Primeiro uso pelo visor.** Conecte um segundo celular à rede Wi-Fi `CARRINHO` e abra `http://192.168.4.1`. Rode o teste por roda (*Roda esq./dir. (degraus)*) e *Aplicar faixa das rodas*, depois *Servo do sensor*. Aperte *Explorar: sensor* (só sonar) primeiro; após 4 s o carro arma e anda. Com o app rodando no celular da câmera, *Explorar: visao* soma a visão. *PARAR TUDO* faz o reset completo.
-4. **Logs.** *Baixar log* na página do operador, ou `http://<ip-do-celular>:8080/logs` para as corridas do celular; formato em [docs/como_ler_o_log.md](docs/como_ler_o_log.md). Converta o vídeo de uma corrida com `python -m tools.video_to_mp4 <pasta dos logs>`.
+4. **Logs.** *Baixar log* na página do operador, ou `http://<ip-do-celular>:8080/logs` para as corridas do celular; formato em [docs/exemplos_de_log/](docs/exemplos_de_log/README.md). Converta o vídeo de uma corrida com `python -m tools.video_to_mp4 <pasta dos logs>`.
 
-<!-- MIDIA 4 (download do log): print da página /logs no navegador do celular. Ver docs/media/LISTA_DE_GRAVACAO.md, tomada 4. -->
-<!-- MIDIA 5 (foto do hardware): foto do carro montado com a fiação atual, ao lado da tabela de pinagem. Ver docs/media/LISTA_DE_GRAVACAO.md, tomada 5. -->
 
 ## Estrutura do repositório
 

@@ -12,7 +12,6 @@
 </p>
 <p align="center"><sub>Replay of a run recorded by the car's own camera (24 s of 36). Left: camera. Right: floor segmentation (green = floor). Bottom: vision state, controller state of the offline replay and the relative confidence <code>r</code> with its thresholds.</sub></p>
 
-<!-- MIDIA 1 (top of README, replaces or complements the GIF above): GIF/MP4 of the real car driving and dodging an obstacle. See docs/media/LISTA_DE_GRAVACAO.md, take 1. -->
 
 > 🇧🇷 Versão em português: [README.pt-BR.md](README.pt-BR.md). The technical documents in [`docs/`](docs/README.md) are in Brazilian Portuguese, except the architecture notes and the engineering decisions, which are in English.
 >
@@ -26,7 +25,6 @@
 - **Runs recorded as data.** Each run saves a JSONL log and the camera video on the phone, downloadable from the operator page, to be replayed offline or used as a dataset.
 - **Operator page served by the ESP32** (no app needed): arm, choose the mode, stop, run diagnostics, watch the sensor radar and the vision mask.
 
-<!-- MIDIA 3 (operator page): full-screen phone screenshot/recording of the operator page with the expanded vision image. See docs/media/LISTA_DE_GRAVACAO.md, take 3. -->
 
 **Context.** The design was informed by studying how Waymo and Tesla approach perception: a redundant multi-sensor stack on one side, a camera-first stack on the other. This car is a toy-scale take on that trade-off: the camera is the main sensor and a cheap ultrasonic sensor adds redundancy where the camera is weak. Scale, safety requirements and methods are not comparable.
 
@@ -54,9 +52,9 @@ flowchart LR
     FW --- WEB
 ```
 
-Per camera frame: segment the floor, turn the free-space estimate into one of three vision states, send it (with the heading and the camera-motion index) to the ESP32. The firmware keeps its own reflexes (hard stop, watchdog, arming) whatever the phone does. Details: [docs/architecture.md](docs/architecture.md), wire protocol: [docs/protocolo_ws.md](docs/protocolo_ws.md), execution flow: [docs/desenvolvimento/fluxo_de_execucao.md](docs/desenvolvimento/fluxo_de_execucao.md).
+Per camera frame: segment the floor, turn the free-space estimate into one of three vision states, send it (with the heading and the camera-motion index) to the ESP32. The firmware keeps its own reflexes (hard stop, watchdog, arming) whatever the phone does. Details: [docs/architecture.md](docs/architecture.md), wire protocol: [docs/protocolo_ws.md](docs/protocolo_ws.md).
 
-Design decisions (problem, discarded alternative and evidence for each): [docs/engineering-decisions.md](docs/engineering-decisions.md). Highlights:
+Design decisions (problem, choice and evidence for each): [docs/architecture.md#engineering-decisions](docs/architecture.md#engineering-decisions). Highlights:
 
 - **Vision without training:** H-S histogram of the floor, back-projection, an automatic threshold from a percentile of the region of interest, morphology. Nothing to retrain when the floor changes.
 - **Frame-rate independent decisions:** relative confidence with hysteresis and persistence in seconds; the same behavior at 5, 10 or 20 fps (covered by tests).
@@ -74,7 +72,7 @@ Design decisions (problem, discarded alternative and evidence for each): [docs/e
 | PC, 12 threads (10) | 0.4 ms | 5.7 ms | 3.9 ms | < 0.05 ms | 9.6 ms |
 | Samsung Galaxy S9, 1 thread (30) | 2.4 ms | 9.9 ms | 7.6 ms | 0.1 ms | 17.6 ms |
 
-On the S9 the pipeline computes at ~56 fps: it keeps up with a 30 fps source and has ~5.7x headroom at the 10 fps the car runs at. The 19 runs on the phone (1 to 4 threads) stay between 17.5 and 18.1 ms ([series](assets/simulation_Scar/Reframed_videos/docs/logs/bench/bench_s9_runs.txt)), so the vision runs with a single OpenCV thread.
+On the S9 the pipeline computes at ~56 fps on the benchmark video; on the car (live 640x360 camera, plus sectors, motion and logging) it processed 22 to 26 frames per second at ~21 ms per frame, a fifth of the 100 ms budget. The run video is recorded at 10 fps. The 19 runs on the phone (1 to 4 threads) stay between 17.5 and 18.1 ms ([series](assets/simulation_Scar/Reframed_videos/docs/logs/bench/bench_s9_runs.txt)), so the vision runs with a single OpenCV thread.
 
 **Tests:** 73 automated tests (`python -m pytest tests -q`) cover the vision decision at several frame rates, the heading controller, the brain/link logic, the live path as packaged for the phone, the log/video writers, the Python/firmware parameter mirror and the firmware itself, through the simulator.
 
@@ -88,13 +86,12 @@ On the S9 the pipeline computes at ~56 fps: it keeps up with a 30 fps source and
 | Open space, wall of similar color | 189 | 99 / 48 / 42 | edge probe flags the wall at 4.1 s, the sensor trips at 4.5 s, vision confirms at 4.7 s |
 | Sofa with a nearby object | 105 | 30 / 12 / 63 | vision alone calls the obstacle at 2.1 s |
 
-**Field validation** (20 to 26 Nov 2026, firmware 0.5.x to 0.7.0): per-wheel duty ranges, the heading-hold gains and the trim were measured on the car with the phone's gyroscope; the wiring was confirmed by the gyroscope, not by assumption. Day-by-day record: [docs/desenvolvimento/diario_de_campo.md](docs/desenvolvimento/diario_de_campo.md). Example logs: [docs/exemplos_de_log/](docs/exemplos_de_log/).
+**Field validation** (20 to 26 Nov 2026, firmware 0.5.x to 0.7.0): per-wheel duty ranges, the heading-hold gains and the trim were measured on the car with the phone's gyroscope; the wiring was confirmed by the gyroscope, not by assumption. Example logs and how to read them: [docs/exemplos_de_log/](docs/exemplos_de_log/).
 
-<!-- MIDIA 2 (crash + reverse + dodge): 10-15 s recording of the car hitting something, backing off and dodging. See docs/media/LISTA_DE_GRAVACAO.md, take 2. -->
 
 ## Limitations
 
-- **Crash detection by camera (0.7.0)** is implemented and covered by the simulator, but its field validation is planned: the thresholds (`stall_cam_max` and friends) are starting points to tune with recorded runs.
+- **Crash detection by camera (0.7.0)** is covered by the simulator and caught one real crash in the field (26 Nov), but that is a single event: the thresholds (`stall_cam_max` and friends) are starting points to tune with recorded runs.
 - **Hardware quirks shaped the design.** The two drive wheels respond very differently to the same duty, which is why the duty range is stored per wheel and the heading is closed on the gyroscope. The sensor servo had intermittent wiring on the prototype (signal moved to GPIO4); the operator page has a servo test for that.
 - **Vision alone does not solve a wall whose color is close to the floor's.** The color model under-reacts, the edge probe needs a visible baseboard and optical flow did not help. The range sensor covers this case, which is why it is the authority. A learned monocular depth model is the candidate next step.
 - **Replays use a scripted sensor.** They show that the logic behaves sensibly, not detection accuracy. There is no labeled benchmark yet.
@@ -138,10 +135,8 @@ The wheel directions are fixed in the firmware (`MOTOR_LEFT_INVERT` / `MOTOR_RIG
 1. **Firmware.** Copy `car_firmware/secrets.example.h` to `car_firmware/secrets.h` (git-ignored) and set the Wi-Fi password (without it the access point uses a public default). Build `car_firmware/car_firmware.ino` with the Arduino ESP32 core 3.x and the *WebSockets* library (Markus Sattler).
 2. **App.** Build `android/` in Android Studio (Chaquopy runs the Python code; Gradle copies the sources): [docs/android.md](docs/android.md).
 3. **First use through the operator page.** Join the `CARRINHO` Wi-Fi on a second phone and open `http://192.168.4.1`. Run the per-wheel test (*Roda esq./dir. (degraus)*) and *Aplicar faixa das rodas*, then *Servo do sensor*. Press *Explorar: sensor* (sonar only) first; after 4 s the car arms and drives. With the app running on the camera phone, *Explorar: visao* adds the vision. *PARAR TUDO* resets everything.
-4. **Logs.** *Baixar log* on the operator page, or `http://<phone-ip>:8080/logs` for the phone's runs; format in [docs/como_ler_o_log.md](docs/como_ler_o_log.md). Convert a run video with `python -m tools.video_to_mp4 <log folder>`.
+4. **Logs.** *Baixar log* on the operator page, or `http://<phone-ip>:8080/logs` for the phone's runs; format in [docs/exemplos_de_log/](docs/exemplos_de_log/README.md). Convert a run video with `python -m tools.video_to_mp4 <log folder>`.
 
-<!-- MIDIA 4 (log download): screenshot of the /logs page in the phone browser. See docs/media/LISTA_DE_GRAVACAO.md, take 4. -->
-<!-- MIDIA 5 (hardware photo): photo of the assembled car with the current wiring, to sit next to the pinout table. See docs/media/LISTA_DE_GRAVACAO.md, take 5. -->
 
 ## Repository layout
 

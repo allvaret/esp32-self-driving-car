@@ -1,20 +1,16 @@
 # Documentação
 
 Índice dos documentos do projeto. O resumo e a visão geral estão no [README](../README.pt-BR.md) (em inglês: [README.md](../README.md)).
-Política de idioma: documentos técnicos em português; `architecture.md` e `engineering-decisions.md` em inglês; READMEs nos dois idiomas.
+Política de idioma: documentos técnicos em português; `architecture.md` em inglês; READMEs nos dois idiomas.
 
 | Documento | Para quê |
 |---|---|
-| [architecture.md](architecture.md) | arquitetura atual (en): camadas, firmware, visor |
-| [engineering-decisions.md](engineering-decisions.md) | decisões de projeto, alternativas descartadas e evidências (en) |
+| [architecture.md](architecture.md) | arquitetura atual (en): camadas, caminho de um quadro, quem decide em cada modo, máquina de estados do firmware, visor, fiação e decisões de projeto |
 | [protocolo_ws.md](protocolo_ws.md) | protocolo celular ↔ ESP32 (WebSocket/JSON), fiação dos motores, comandos |
-| [parametros.md](parametros.md) | parâmetros do sistema: valor atual, status e como ajustar a outro hardware |
-| [como_ler_o_log.md](como_ler_o_log.md) | formato dos logs e do vídeo da corrida, e como convertê-los |
 | [android.md](android.md) | compilar e instalar o app Android (Chaquopy) |
-| [desenvolvimento/fluxo_de_execucao.md](desenvolvimento/fluxo_de_execucao.md) | caminho de um quadro até o motor, quem decide em cada modo |
-| [desenvolvimento/diario_de_campo.md](desenvolvimento/diario_de_campo.md) | testes de campo, achados e checklist da próxima sessão |
-| [exemplos_de_log/](exemplos_de_log/) | um log de cada tipo, pequeno |
-| [media/LISTA_DE_GRAVACAO.md](media/LISTA_DE_GRAVACAO.md) | tomadas de vídeo/foto planejadas para o README |
+| [exemplos_de_log/](exemplos_de_log/README.md) | um log de cada tipo e como ler os logs e o vídeo da corrida |
+
+Os parâmetros ficam em `config.py` (com o espelho do firmware verificado por `tests/test_config_firmware.py`).
 
 ## Por onde começar a ler o código
 

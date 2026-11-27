@@ -2,7 +2,7 @@
 
 Valores iniciais de projeto. Os que dependem do hardware (motores, sensor, camera) foram
 validados no carro em 20-26/11/2026; os demais sao pontos de partida a ajustar ao replicar com
-outro hardware. Status de cada parametro: docs/parametros.md.
+outro hardware (a maioria pelo diagnostico do visor). O que cada um faz: docs/architecture.md e docs/protocolo_ws.md.
 
 Use:
     cfg = Config.load("config.json")       # ou Config() para os padroes
@@ -60,7 +60,7 @@ class ControlConfig:
     guard_window_s: float = 20.0
     guard_max_episodes: int = 2   # a partir do (N+1)-esimo DESVIO na janela, espera em vez de manobrar
     guard_backoff_s: Tuple[float, ...] = (1.0, 2.0, 4.0)   # sobe a cada reentrada; reseta apos a janela
-    # --- "sem eco" em 3 estados e opiniao do celular (firmware; ver docs/parametros.md) ---
+    # --- "sem eco" em 3 estados e opiniao do celular (firmware; ver docs/architecture.md) ---
     sensor_fresh_s: float = 0.4   # leitura central mais velha que isso nao vale (firmware fresh_ms; brain: refutar a visao)
     vis_fresh_s: float = 0.3      # vis mais velha que isso = sem opiniao
     yaw_fresh_s: float = 0.2      # yaw mais velho que isso = curva pelo tempo (turn_dps)
@@ -112,7 +112,7 @@ class DecisionConfig:
 
 @dataclass
 class HeadingConfig:
-    """Rumo em linha reta com o giroscopio (control/heading.py). Ganhos iniciais validados em campo; o trim e aprendido e salvo na NVS (docs/parametros.md)."""
+    """Rumo em linha reta com o giroscopio (control/heading.py). Ganhos iniciais validados em campo; o trim e aprendido e salvo na NVS."""
     enabled: bool = True
     kp_rate: float = 0.005        # steer por (grau/s) de giro. Alto demais -> o carro balanca
     kh: float = 0.02              # steer por grau de rumo acumulado (e quem cancela o desvio fixo)
